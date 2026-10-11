@@ -11,8 +11,9 @@ Why SQLite only: this is for light, local, throwaway data. The index is one file
 exact counts, and nothing you do here can hammer a shared database server with aggregation
 queries. A `.db` on a laptop, or in a browser tab, is the whole deployment.
 
-> Status: early. The profile, the AST, the reference evaluator and the Elasticsearch JSON
-> walker are in place and tested. The SQL compiler is next. Not published to crates.io yet.
+> Status: early. The profile, the Elasticsearch JSON walker, the reference evaluator, the SQL
+> compiler and the SQLite executor are in place and tested against each other and against a
+> real Elasticsearch. Next: the `query_string` grammar, then WebAssembly. Not on crates.io yet.
 
 ## What is accepted
 
@@ -38,10 +39,15 @@ Deliberate differences from Elasticsearch, each held by a test:
 - Counts are exact, never approximate. `terms` has no `shard_size`.
 - `should` is supported only directly in a `bool`; `minimum_should_match` beyond 0 and 1 is refused.
 - With no `sort`, hits come back in `_id` order.
-- Text is tokenized the way FTS5's `unicode61` does: lower-cased alphanumeric runs. Elasticsearch's
-  standard analyzer keeps `doesn't` and `v1.41.0` whole; here they split.
+- Text is tokenized exactly as FTS5's `unicode61` does (measured against SQLite, not assumed:
+  `dev/tokenizer_parity.py`): split at spaces, punctuation and symbols, lower-cased with Unicode
+  FTS5's own case folding, diacritics kept, every code point checked. Elasticsearch's standard
+  analyzer keeps `doesn't` and `v1.41.0` whole; here they split. There is no stemming, and FTS5
+  cuts a single token at 32 KB where the evaluator does not.
+- A value that does not fit its field's type is empty: `exists` is false for it and it matches
+  nothing. Elasticsearch would have refused the record at indexing time.
 
-Checked against a real Elasticsearch 9.5.5 (`dev/es_parity.py`, single shard, same 336 records):
+Checked against a real Elasticsearch 9.5.5 (`dev/es_parity.py`, single shard, same records):
 every fixture matches, including date-only range bounds rounding up for `gt` and `lte`, range
 buckets ordered by `from`, and `minimum_should_match: 0` still needing one `should`.
 
@@ -66,18 +72,37 @@ but `text`.
 
 ```bash
 cargo build --release
-F=fixtures/github-issues
+F=fixtures/library
 
-target/release/esque eval --mapping $F/mapping.json --docs $F/docs.json '{
-  "query": {"bool": {"filter": [{"term": {"state": "open"}}, {"terms": {"labels": ["bug"]}}]}},
-  "aggs": {"labels": {"terms": {"field": "labels", "size": 5}}},
-  "sort": [{"comments": "desc"}], "size": 3
+# build a store from JSON records, then query it
+target/release/esque load --mapping $F/mapping.json --docs $F/docs.json --db library.db
+target/release/esque search --db library.db '{
+  "query": {"bool": {"filter": [{"term": {"available": true}}, {"terms": {"genres": ["mystery"]}}]}},
+  "aggs": {"genres": {"terms": {"field": "genres", "size": 5}}},
+  "sort": [{"rating": "desc"}], "size": 3
 }'
+
+# or see the SQL a request compiles to
+target/release/esque compile --mapping $F/mapping.json '{"query": {"term": {"format": "ebook"}}, "size": 0}'
 ```
 
-`esque parse` prints the AST and the canonical Elasticsearch form of a request, or the
-refusal. `esque mapping` validates a mapping. The evaluator runs over a JSON list of records;
-it is the reference, not the fast path.
+`esque compile` prints the statements and their bound parameters. `esque parse` prints the
+AST and the canonical Elasticsearch form of a request, or the refusal. `esque eval` runs the
+reference evaluator over a JSON list of records: the definition of the semantics, not the fast
+path. `esque mapping` validates a mapping.
+
+## How it works
+
+A request runs as one read transaction on one `docs` table. The matching ids are materialised
+once into a temp table; the total, the page of hits and every aggregation are computed from
+that set, so the filter runs once and hits and aggregations can never disagree. Keywords have
+a case-folded shadow column, dates an epoch-millisecond one, arrays are JSON queried through
+`json_each`, text goes through an FTS5 table with the `unicode61` tokenizer, one row per value.
+The record itself is kept as `_source` and returned as it was. Every value is a bound parameter;
+identifiers come only from the validated mapping. A histogram that would span more than 65,536
+buckets and a page past Elasticsearch's result window of 10,000 are refused, as there. The compiler itself does no
+I/O: with `--no-default-features` the crate has no SQLite dependency and is ready for
+WebAssembly.
 
 ```
 {"error": {"path": "query.bool.filter[1].wildcard", "message": "'wildcard' is not supported",
@@ -86,15 +111,22 @@ it is the reference, not the fast path.
 
 ## How it is tested
 
-- `fixtures/github-issues`: 336 real GitHub issues and pull requests (meilisearch/meilisearch,
-  fetched 2026-10-10) with an Elasticsearch-style mapping, and 46 request fixtures whose
-  expectations were computed by an independent Python oracle (`dev/python_oracle.py`).
+- `fixtures/library`: a generated corpus of 400 records, an invented library catalogue
+  (`dev/make_corpus.py`, seeded, nothing taken from any real dataset), designed to hold what
+  breaks compilers: case variants, awkward characters in keywords, empty and duplicate array
+  values, a date array and a text array, whole-number floats, negatives, nulls in every type,
+  dates before 1970, decomposed accents. With it, an Elasticsearch-style mapping and 78 request
+  fixtures whose expectations were computed by an independent Python oracle
+  (`dev/python_oracle.py`) and pinned to a real Elasticsearch.
+- Both engines, the evaluator and the SQLite store, answer every fixture, and are compared to
+  each other on the whole response: total, hits in order with `_source`, aggregations.
 - Property tests (`tests/properties.rs`): printing an AST to Elasticsearch JSON and parsing it
   back is the identity; a query and its `must_not` partition the corpus; a `terms`
   aggregation's counts add up to the records that have the field; pages have the right size
-  and distinct ids.
-- Next: the SQL compiler is held to the same fixtures and to the evaluator on generated
-  queries, then to a real single-shard Elasticsearch loaded with the same records.
+  and distinct ids; and the SQLite store answers exactly as the evaluator on 200 random
+  requests per run.
+- Parity with a real Elasticsearch 9.5.5 (`dev/es_parity.py`, single shard, same records), for
+  both engines, in CI as a required check.
 
 ## Layout
 
@@ -103,6 +135,9 @@ src/mapping.rs    fields, types, what each allows
 src/ast.rs        the typed request
 src/dsl.rs        Elasticsearch JSON -> AST (whitelist, path errors) and back
 src/eval.rs       the reference evaluator
+src/sql.rs        the schema and the statements a request compiles to (no I/O)
+src/store.rs      the SQLite executor (feature `sqlite`, on by default)
+src/shape.rs      Elasticsearch's response shape, shared by both engines
 src/timeutil.rs   ISO dates and calendar buckets without a dependency
 src/bin/esque.rs  the command line
 ```

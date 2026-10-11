@@ -1,0 +1,24 @@
+{
+ "name": "sort_published_asc_from",
+ "request": {
+  "query": {
+   "term": {
+    "format": "hardcover"
+   }
+  },
+  "sort": [
+   "published_at"
+  ],
+  "size": 4,
+  "from": 2
+ },
+ "expect": {
+  "total": 77,
+  "hit_ids": [
+   "b0036",
+   "b0101",
+   "b0053",
+   "b0065"
+  ]
+ }
+}

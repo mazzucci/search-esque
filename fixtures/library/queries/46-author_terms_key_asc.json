@@ -1,0 +1,40 @@
+{
+ "name": "author_terms_key_asc",
+ "request": {
+  "size": 0,
+  "aggs": {
+   "a": {
+    "terms": {
+     "field": "author",
+     "size": 3,
+     "order": {
+      "_key": "asc"
+     }
+    }
+   }
+  }
+ },
+ "expect": {
+  "total": 400,
+  "aggregations": {
+   "a": {
+    "doc_count_error_upper_bound": 0,
+    "sum_other_doc_count": 356,
+    "buckets": [
+     {
+      "key": "Ada Quill",
+      "doc_count": 15
+     },
+     {
+      "key": "Bram Tessler",
+      "doc_count": 11
+     },
+     {
+      "key": "Ciela Marrow",
+      "doc_count": 18
+     }
+    ]
+   }
+  }
+ }
+}

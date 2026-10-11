@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """Parity against a real Elasticsearch.
 
-Loads fixtures/github-issues into a single-shard index on a local Elasticsearch, runs every
+Loads fixtures/library into a single-shard index on a local Elasticsearch, runs every
 answer fixture there and through `esque eval`, and compares totals, hit order, sources and
 aggregations. Standard library only.
 
     docker run -d --name esque-es -p 127.0.0.1:9200:9200 -e discovery.type=single-node \
         -e xpack.security.enabled=false elasticsearch:9.5.5
     cargo build --release
-    python3 dev/es_parity.py            # all fixtures
-    python3 dev/es_parity.py 06 23      # by number prefix
-    python3 dev/es_parity.py --request '{"query": ...}'   # one ad-hoc request
+    python3 dev/es_parity.py                      # all fixtures, both engines (evaluator and SQLite)
+    python3 dev/es_parity.py --engine sql 06 23   # one engine, fixtures by number prefix
+    python3 dev/es_parity.py --request '{"query": ...}'   # one ad-hoc request, both engines
 
 What the harness changes in the request it sends to Elasticsearch, so that the comparison is
 about semantics and not about things the profile defines differently on purpose:
@@ -34,13 +34,14 @@ from pathlib import Path
 ES = "http://127.0.0.1:9200"
 INDEX = "esque-parity"
 ROOT = Path(__file__).resolve().parent.parent
-FX = ROOT / "fixtures" / "github-issues"
+FX = ROOT / "fixtures" / "library"
 ESQUE = ROOT / "target" / "release" / "esque"
 
 DIVERGENT = {
     "term_case_insensitive": "term on a keyword ignores case in the profile; Elasticsearch is case-sensitive",
     "match_apostrophe_token": "FTS5 unicode61 splits doesn't into doesn + t; the standard analyzer keeps it whole",
-    "match_dotted_token": "FTS5 unicode61 splits v1.41.0 into v1 + 41 + 0; the standard analyzer keeps it whole",
+    "match_dotted_token": "FTS5 unicode61 splits v2.0 into v2 + 0; the standard analyzer keeps it whole",
+    "match_title_micro_sign_folds_to_mu": "FTS5 case-folds the micro sign to mu; the standard analyzer lower-cases only",
 }
 
 
@@ -63,7 +64,7 @@ def http(method, path, body=None, ndjson=None):
 
 def es_mapping(mapping):
     types = {"keyword": {"type": "keyword"}, "text": {"type": "text"}, "long": {"type": "long"},
-             "boolean": {"type": "boolean"}, "date": {"type": "date"}}
+             "double": {"type": "double"}, "boolean": {"type": "boolean"}, "date": {"type": "date", "ignore_malformed": True}}
     props = {name: dict(types[spec["type"]]) for name, spec in mapping["properties"].items()}
     props["id"] = {"type": "keyword"}
     return {"settings": {"number_of_shards": 1, "number_of_replicas": 0}, "mappings": {"properties": props}}
@@ -146,10 +147,31 @@ def close(a, b, path="", diffs=None):
     return diffs
 
 
+ENGINE = "eval"
+DB = None
+
+
 def esque_eval(request):
-    p = subprocess.run([str(ESQUE), "eval", "--mapping", str(FX / "mapping.json"), "--docs", str(FX / "docs.json"), json.dumps(request)],
-                       capture_output=True, text=True)
+    if ENGINE == "sql":
+        argv = [str(ESQUE), "search", "--db", DB, json.dumps(request)]
+    else:
+        argv = [str(ESQUE), "eval", "--mapping", str(FX / "mapping.json"), "--docs", str(FX / "docs.json"), json.dumps(request)]
+    p = subprocess.run(argv, capture_output=True, text=True)
     return json.loads(p.stdout)
+
+
+def build_db():
+    """Loads the corpus into a fresh SQLite store through the CLI, for the sql engine."""
+    import atexit
+    import shutil
+    import tempfile
+    global DB
+    folder = tempfile.mkdtemp()
+    atexit.register(shutil.rmtree, folder, True)
+    DB = str(Path(folder) / "parity.db")
+    p = subprocess.run([str(ESQUE), "load", "--mapping", str(FX / "mapping.json"), "--docs", str(FX / "docs.json"), "--db", DB],
+                       capture_output=True, text=True)
+    assert p.returncode == 0, p.stdout + p.stderr
 
 
 def compare(name, request, mapping):
@@ -175,7 +197,12 @@ def compare(name, request, mapping):
 
 
 def main():
+    global ENGINE
     args = sys.argv[1:]
+    engines = ["eval", "sql"]
+    if args[:1] == ["--engine"]:
+        engines = [args[1]]
+        args = args[2:]
     mapping = json.load(open(FX / "mapping.json"))
     docs = json.load(open(FX / "docs.json"))
     status, info = http("GET", "/")
@@ -185,14 +212,28 @@ def main():
 
     if args[:1] == ["--request"]:
         req = json.loads(args[1])
-        diffs = compare("ad hoc", req, mapping)
-        print("MATCH" if not diffs else "\n".join(diffs))
+        for ENGINE in engines:
+            if ENGINE == "sql":
+                build_db()
+            diffs = compare("ad hoc", req, mapping)
+            print(f"[{ENGINE}] " + ("MATCH" if not diffs else "\n".join(diffs)))
         return
 
     files = sorted((FX / "queries").glob("*.json"))
     if args:
         files = [f for f in files if any(f.name.startswith(a) for a in args)]
-    matched, expected, findings = 0, 0, []
+    acc = [0, 0, []]
+    for ENGINE in engines:
+        if ENGINE == "sql":
+            build_db()
+        print(f"--- engine: {ENGINE}")
+        run_fixtures(files, mapping, acc)
+    matched, expected, findings = acc
+    print(f"\n{matched} match, {expected} expected divergences, {len(findings)} findings")
+    sys.exit(1 if findings else 0)
+
+
+def run_fixtures(files, mapping, acc):
     for f in files:
         fx = json.load(open(f))
         if "error_path" in fx["expect"]:
@@ -200,20 +241,18 @@ def main():
         name = fx["name"]
         diffs = compare(name, fx["request"], mapping)
         if not diffs:
-            matched += 1
+            acc[0] += 1
             print(f"MATCH     {name}")
         elif name in DIVERGENT:
-            expected += 1
+            acc[1] += 1
             print(f"EXPECTED  {name}: {DIVERGENT[name]}")
         else:
-            findings.append((name, diffs))
+            acc[2].append((f"{ENGINE}:{name}", diffs))
             print(f"DIFFERS   {name}")
             for d in diffs[:12]:
                 print(f"            {d}")
             if len(diffs) > 12:
                 print(f"            ... {len(diffs) - 12} more")
-    print(f"\n{matched} match, {expected} expected divergences, {len(findings)} findings")
-    sys.exit(1 if findings else 0)
 
 
 if __name__ == "__main__":

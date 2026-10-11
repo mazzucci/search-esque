@@ -1,0 +1,14 @@
+{
+ "name": "err_not_elasticsearch",
+ "request": {
+  "filters": [
+   {
+    "field": "format",
+    "eq": "ebook"
+   }
+  ]
+ },
+ "expect": {
+  "error_path": "$.filters"
+ }
+}

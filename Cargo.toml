@@ -17,9 +17,15 @@ path = "src/lib.rs"
 name = "esque"
 path = "src/bin/esque.rs"
 
+[features]
+default = ["sqlite"]
+# The executor. Off, the crate is pure and compiles to WebAssembly.
+sqlite = ["dep:rusqlite"]
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
+rusqlite = { version = "0.40.2", features = ["bundled"], optional = true }
 
 [dev-dependencies]
 proptest = "1"

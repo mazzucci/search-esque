@@ -1,0 +1,56 @@
+{
+ "name": "long_books_stats",
+ "request": {
+  "size": 0,
+  "query": {
+   "range": {
+    "pages": {
+     "gte": 500
+    }
+   }
+  },
+  "aggs": {
+   "p": {
+    "stats": {
+     "field": "pages"
+    }
+   },
+   "price": {
+    "avg": {
+     "field": "price"
+    }
+   },
+   "balance": {
+    "max": {
+     "field": "balance"
+    }
+   },
+   "copies": {
+    "sum": {
+     "field": "copies"
+    }
+   }
+  }
+ },
+ "expect": {
+  "total": 218,
+  "aggregations": {
+   "p": {
+    "count": 218,
+    "min": 501.0,
+    "max": 1197.0,
+    "avg": 851.3990825688073,
+    "sum": 185605.0
+   },
+   "price": {
+    "value": 45.00831730769235
+   },
+   "balance": {
+    "value": 60.0
+   },
+   "copies": {
+    "value": 1338.0
+   }
+  }
+ }
+}

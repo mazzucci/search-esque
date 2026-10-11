@@ -38,6 +38,18 @@ pub const TYPE_NAMES: &[&str] = &[
 
 const FIELD_OPTIONS: &[&str] = &["type", "array", "aggregatable"];
 
+/// Names a field cannot have: the store's own tables and columns, and FTS5's reserved columns.
+const RESERVED: &[&str] = &[
+    "docs",
+    "fts",
+    "esque_matched",
+    "esque_meta",
+    "rank",
+    "rowid",
+    "oid",
+    "source",
+];
+
 impl FieldType {
     /// Accepts Elasticsearch's type names; every numeric type becomes `Number`.
     pub fn parse(name: &str) -> Option<FieldType> {
@@ -86,12 +98,32 @@ impl Mapping {
                     .hint(r#"{"properties": {"state": {"type": "keyword"}}}"#)
             })?;
         let mut fields = BTreeMap::new();
+        let mut seen_folded = std::collections::BTreeSet::new();
         for (name, spec) in props {
             let path = format!("$.properties.{}", name);
-            if name.is_empty() || name.starts_with('_') || name.contains('.') {
+            if name.is_empty()
+                || name.starts_with('_')
+                || name.contains("__")
+                || !name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+            {
                 return Err(Error::new(
                     &path,
-                    "field names must not be empty, start with _ or contain a dot",
+                    "field names are letters, digits, _ and -, do not start with _ and do not contain __",
+                ));
+            }
+            // SQLite identifiers ignore case, and a few names belong to the store or to FTS5.
+            let folded = name.to_lowercase();
+            if RESERVED.contains(&folded.as_str()) {
+                return Err(
+                    Error::new(&path, format!("'{}' is a reserved name here", name)).supported(&[]),
+                );
+            }
+            if !seen_folded.insert(folded) {
+                return Err(Error::new(
+                    &path,
+                    format!("'{}' differs from another field only by letter case", name),
                 ));
             }
             let obj = spec

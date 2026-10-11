@@ -1,0 +1,22 @@
+{
+ "name": "err_sub_aggregation",
+ "request": {
+  "aggs": {
+   "by": {
+    "terms": {
+     "field": "format"
+    },
+    "aggs": {
+     "c": {
+      "avg": {
+       "field": "price"
+      }
+     }
+    }
+   }
+  }
+ },
+ "expect": {
+  "error_path": "aggs.by.aggs"
+ }
+}

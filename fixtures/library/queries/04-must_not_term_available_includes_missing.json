@@ -1,0 +1,18 @@
+{
+ "name": "must_not_term_available_includes_missing",
+ "request": {
+  "size": 0,
+  "query": {
+   "bool": {
+    "must_not": {
+     "term": {
+      "available": true
+     }
+    }
+   }
+  }
+ },
+ "expect": {
+  "total": 140
+ }
+}

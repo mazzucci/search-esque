@@ -1,0 +1,47 @@
+{
+ "name": "balance_histogram_negative",
+ "request": {
+  "size": 0,
+  "aggs": {
+   "h": {
+    "histogram": {
+     "field": "balance",
+     "interval": 20
+    }
+   }
+  }
+ },
+ "expect": {
+  "total": 400,
+  "aggregations": {
+   "h": {
+    "buckets": [
+     {
+      "key": -40,
+      "doc_count": 69
+     },
+     {
+      "key": -20,
+      "doc_count": 79
+     },
+     {
+      "key": 0,
+      "doc_count": 93
+     },
+     {
+      "key": 20,
+      "doc_count": 71
+     },
+     {
+      "key": 40,
+      "doc_count": 87
+     },
+     {
+      "key": 60,
+      "doc_count": 1
+     }
+    ]
+   }
+  }
+ }
+}

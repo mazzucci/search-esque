@@ -1,0 +1,13 @@
+{
+ "name": "err_unknown_field",
+ "request": {
+  "query": {
+   "term": {
+    "autor": "Ada Quill"
+   }
+  }
+ },
+ "expect": {
+  "error_path": "query.term.autor"
+ }
+}

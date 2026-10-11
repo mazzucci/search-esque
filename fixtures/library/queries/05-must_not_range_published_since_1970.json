@@ -1,0 +1,20 @@
+{
+ "name": "must_not_range_published_since_1970",
+ "request": {
+  "size": 0,
+  "query": {
+   "bool": {
+    "must_not": {
+     "range": {
+      "published_at": {
+       "gte": "1970-01-01"
+      }
+     }
+    }
+   }
+  }
+ },
+ "expect": {
+  "total": 276
+ }
+}

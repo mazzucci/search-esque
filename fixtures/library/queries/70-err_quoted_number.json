@@ -1,0 +1,15 @@
+{
+ "name": "err_quoted_number",
+ "request": {
+  "query": {
+   "range": {
+    "pages": {
+     "gte": "500"
+    }
+   }
+  }
+ },
+ "expect": {
+  "error_path": "query.range.pages.gte"
+ }
+}

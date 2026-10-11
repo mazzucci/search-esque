@@ -1,0 +1,40 @@
+{
+ "name": "format_terms",
+ "request": {
+  "size": 0,
+  "aggs": {
+   "by_format": {
+    "terms": {
+     "field": "format"
+    }
+   }
+  }
+ },
+ "expect": {
+  "total": 400,
+  "aggregations": {
+   "by_format": {
+    "doc_count_error_upper_bound": 0,
+    "sum_other_doc_count": 0,
+    "buckets": [
+     {
+      "key": "paperback",
+      "doc_count": 162
+     },
+     {
+      "key": "audiobook",
+      "doc_count": 90
+     },
+     {
+      "key": "hardcover",
+      "doc_count": 77
+     },
+     {
+      "key": "ebook",
+      "doc_count": 71
+     }
+    ]
+   }
+  }
+ }
+}

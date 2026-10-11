@@ -28,6 +28,12 @@ impl Error {
         }
     }
 
+    /// The same error, anchored at a more specific path.
+    pub fn at(mut self, path: impl Into<String>) -> Self {
+        self.path = path.into();
+        self
+    }
+
     pub fn hint(mut self, hint: impl Into<String>) -> Self {
         self.hint = Some(hint.into());
         self

@@ -1069,6 +1069,16 @@ pub fn parse_request(v: &Value, m: &Mapping) -> Result<Request> {
     if let Some(f) = o.get("from") {
         req.from = as_usize(f, "from", "from")?;
     }
+    if req.from.saturating_add(req.size) > MAX_SIZE {
+        return Err(Error::new(
+            "from",
+            format!(
+                "from + size is at most {} (Elasticsearch's result window)",
+                MAX_SIZE
+            ),
+        )
+        .hint("narrow the query, or page in smaller steps"));
+    }
     if let Some(s) = o.get("_source") {
         req.source = parse_source(s, m, "_source")?;
     }

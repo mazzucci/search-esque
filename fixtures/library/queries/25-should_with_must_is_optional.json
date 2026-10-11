@@ -1,0 +1,25 @@
+{
+ "name": "should_with_must_is_optional",
+ "request": {
+  "size": 0,
+  "query": {
+   "bool": {
+    "must": {
+     "term": {
+      "format": "paperback"
+     }
+    },
+    "should": [
+     {
+      "term": {
+       "author": "nobody-here"
+      }
+     }
+    ]
+   }
+  }
+ },
+ "expect": {
+  "total": 162
+ }
+}

@@ -1,0 +1,41 @@
+{
+ "name": "published_per_day_across_the_epoch",
+ "request": {
+  "size": 0,
+  "query": {
+   "range": {
+    "published_at": {
+     "gte": "1969-12-30",
+     "lt": "1970-01-03"
+    }
+   }
+  },
+  "aggs": {
+   "per_day": {
+    "date_histogram": {
+     "field": "published_at",
+     "calendar_interval": "day"
+    }
+   }
+  }
+ },
+ "expect": {
+  "total": 20,
+  "aggregations": {
+   "per_day": {
+    "buckets": [
+     {
+      "key_as_string": "1969-12-31T00:00:00.000Z",
+      "key": -86400000,
+      "doc_count": 10
+     },
+     {
+      "key_as_string": "1970-01-01T00:00:00.000Z",
+      "key": 0,
+      "doc_count": 10
+     }
+    ]
+   }
+  }
+ }
+}

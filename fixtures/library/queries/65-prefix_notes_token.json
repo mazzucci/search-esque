@@ -1,0 +1,14 @@
+{
+ "name": "prefix_notes_token",
+ "request": {
+  "size": 0,
+  "query": {
+   "prefix": {
+    "notes": "lant"
+   }
+  }
+ },
+ "expect": {
+  "total": 54
+ }
+}

@@ -1,0 +1,23 @@
+{
+ "name": "source_fields",
+ "request": {
+  "query": {
+   "match_all": {}
+  },
+  "size": 1,
+  "_source": [
+   "title",
+   "price"
+  ]
+ },
+ "expect": {
+  "total": 400,
+  "hit_ids": [
+   "b0001"
+  ],
+  "source_keys": [
+   "price",
+   "title"
+  ]
+ }
+}

@@ -1,0 +1,10 @@
+{
+ "name": "err_result_window",
+ "request": {
+  "size": 100,
+  "from": 9950
+ },
+ "expect": {
+  "error_path": "from"
+ }
+}
