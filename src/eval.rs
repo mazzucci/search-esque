@@ -6,41 +6,38 @@
 //! whole answer.
 //!
 //! Records are JSON objects with an `_id` (string or number) and one entry per mapped field.
-//! A missing or null field is "empty"; an array field holds a list.
+//! A field is empty when it is missing, null, holds a value of the wrong type, or holds a list
+//! where the mapping says single value. An array field holds a list; a single value there
+//! counts as a list of one.
 
 use crate::ast::*;
 use crate::error::{Error, Result};
-use crate::mapping::{FieldType, Mapping};
+use crate::mapping::{Field, FieldType, Mapping};
 use crate::shape::{self, Metrics};
+use crate::sql::source_json;
 use crate::timeutil::{bucket_start, parse_bound, parse_iso};
 use serde_json::{Map, Value};
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
 pub use crate::shape::Key;
+pub use crate::tokenize::tokens;
 
-/// Lower-cased alphanumeric runs: the evaluator's stand-in for FTS5's `unicode61` tokenizer.
-pub fn tokens(s: &str) -> Vec<String> {
-    s.split(|c: char| !c.is_alphanumeric())
-        .filter(|t| !t.is_empty())
-        .map(|t| t.to_lowercase())
-        .collect()
-}
-
-fn raw_values<'a>(doc: &'a Value, field: &str) -> Vec<&'a Value> {
+fn raw_values<'a>(doc: &'a Value, field: &str, array: bool) -> Vec<&'a Value> {
     match doc.get(field) {
         None | Some(Value::Null) => Vec::new(),
-        Some(Value::Array(items)) => items.iter().filter(|v| !v.is_null()).collect(),
+        Some(Value::Array(items)) if array => items.iter().filter(|v| !v.is_null()).collect(),
+        Some(Value::Array(_)) => Vec::new(),
         Some(v) => vec![v],
     }
 }
 
 /// The field's values as keys: keyword and text as strings, numbers as numbers, booleans,
 /// dates as epoch milliseconds. Values that do not fit the type are skipped.
-fn keys(doc: &Value, field: &str, ty: FieldType) -> Vec<Key> {
-    raw_values(doc, field)
+fn keys(doc: &Value, field: &str, f: &Field) -> Vec<Key> {
+    raw_values(doc, field, f.array)
         .into_iter()
-        .filter_map(|v| match ty {
+        .filter_map(|v| match f.ty {
             FieldType::Keyword | FieldType::Text => v.as_str().map(|s| Key::Str(s.to_string())),
             FieldType::Number => v.as_f64().filter(|_| !v.is_boolean()).map(Key::Num),
             FieldType::Boolean => v.as_bool().map(Key::Bool),
@@ -65,8 +62,8 @@ fn eq_ignoring_case(a: &Key, b: &Key) -> bool {
     }
 }
 
-fn text_of(doc: &Value, field: &str) -> Vec<String> {
-    raw_values(doc, field)
+fn text_of(doc: &Value, field: &str, f: &Field) -> Vec<String> {
+    raw_values(doc, field, f.array)
         .into_iter()
         .filter_map(|v| v.as_str().map(str::to_string))
         .collect()
@@ -105,19 +102,30 @@ pub fn matches(q: &Query, doc: &Value, m: &Mapping) -> bool {
             matched >= needed
         }
         Query::Term { field, value } => {
-            let ty = m.fields[field].ty;
-            let want = match scalar_key(value, ty) {
+            let f = &m.fields[field];
+            // A date without a time part means the whole day, as in Elasticsearch.
+            if let (FieldType::Date, Scalar::Str(s)) = (f.ty, value) {
+                if s.len() == 10 {
+                    let (Some(lo), Some(hi)) = (parse_bound(s, false), parse_bound(s, true)) else {
+                        return false;
+                    };
+                    return keys(doc, field, f).iter().any(
+                        |k| matches!(k, Key::Num(ms) if *ms >= lo as f64 && *ms <= hi as f64),
+                    );
+                }
+            }
+            let want = match scalar_key(value, f.ty) {
                 Some(k) => k,
                 None => return false,
             };
-            keys(doc, field, ty)
+            keys(doc, field, f)
                 .iter()
                 .any(|k| eq_ignoring_case(k, &want))
         }
         Query::Terms { field, values } => {
-            let ty = m.fields[field].ty;
-            let wanted: Vec<Key> = values.iter().filter_map(|v| scalar_key(v, ty)).collect();
-            keys(doc, field, ty)
+            let f = &m.fields[field];
+            let wanted: Vec<Key> = values.iter().filter_map(|v| scalar_key(v, f.ty)).collect();
+            keys(doc, field, f)
                 .iter()
                 .any(|k| wanted.iter().any(|w| eq_ignoring_case(k, w)))
         }
@@ -128,24 +136,24 @@ pub fn matches(q: &Query, doc: &Value, m: &Mapping) -> bool {
             lte,
             lt,
         } => {
-            let ty = m.fields[field].ty;
+            let f = &m.fields[field];
             let b = |s: &Option<Scalar>, round_up: bool| {
-                s.as_ref().and_then(|x| match (ty, x) {
+                s.as_ref().and_then(|x| match (f.ty, x) {
                     (FieldType::Date, Scalar::Str(d)) => {
                         parse_bound(d, round_up).map(|ms| Key::Num(ms as f64))
                     }
-                    _ => scalar_key(x, ty),
+                    _ => scalar_key(x, f.ty),
                 })
             };
             let (gte, gt, lte, lt) = (b(gte, false), b(gt, true), b(lte, true), b(lt, false));
-            keys(doc, field, ty).iter().any(|k| {
+            keys(doc, field, f).iter().any(|k| {
                 gte.as_ref().is_none_or(|x| k >= x)
                     && gt.as_ref().is_none_or(|x| k > x)
                     && lte.as_ref().is_none_or(|x| k <= x)
                     && lt.as_ref().is_none_or(|x| k < x)
             })
         }
-        Query::Exists { field } => !raw_values(doc, field).is_empty(),
+        Query::Exists { field } => !keys(doc, field, &m.fields[field]).is_empty(),
         Query::Match {
             field,
             query,
@@ -155,7 +163,10 @@ pub fn matches(q: &Query, doc: &Value, m: &Mapping) -> bool {
             if want.is_empty() {
                 return false;
             }
-            let have: Vec<String> = text_of(doc, field).iter().flat_map(|t| tokens(t)).collect();
+            let have: Vec<String> = text_of(doc, field, &m.fields[field])
+                .iter()
+                .flat_map(|t| tokens(t))
+                .collect();
             match operator {
                 Operator::Or => want.iter().any(|w| have.contains(w)),
                 Operator::And => want.iter().all(|w| have.contains(w)),
@@ -166,7 +177,8 @@ pub fn matches(q: &Query, doc: &Value, m: &Mapping) -> bool {
             if want.is_empty() {
                 return false;
             }
-            text_of(doc, field).iter().any(|t| {
+            // Each value of an array is its own text: a phrase never spans two elements.
+            text_of(doc, field, &m.fields[field]).iter().any(|t| {
                 let have = tokens(t);
                 have.len() >= want.len() && have.windows(want.len()).any(|w| w == want.as_slice())
             })
@@ -175,11 +187,11 @@ pub fn matches(q: &Query, doc: &Value, m: &Mapping) -> bool {
             let f = &m.fields[field];
             let want = value.to_lowercase();
             match f.ty {
-                FieldType::Text => text_of(doc, field)
+                FieldType::Text => text_of(doc, field, f)
                     .iter()
                     .flat_map(|t| tokens(t))
                     .any(|t| t.starts_with(&want)),
-                _ => raw_values(doc, field)
+                _ => raw_values(doc, field, f.array)
                     .iter()
                     .filter_map(|v| v.as_str())
                     .any(|s| s.to_lowercase().starts_with(&want)),
@@ -188,13 +200,13 @@ pub fn matches(q: &Query, doc: &Value, m: &Mapping) -> bool {
     }
 }
 
-fn doc_id(doc: &Value) -> Result<String> {
+fn doc_id(doc: &Value, index: usize) -> Result<String> {
     match doc.get("_id") {
-        Some(Value::String(s)) => Ok(s.clone()),
+        Some(Value::String(s)) if !s.is_empty() => Ok(s.clone()),
         Some(Value::Number(n)) => Ok(n.to_string()),
         _ => Err(Error::new(
-            "$",
-            "every record needs an _id (string or number)",
+            format!("$[{}]", index),
+            "every record needs an _id (a non-empty string or a number)",
         )),
     }
 }
@@ -207,22 +219,22 @@ fn sorted_dedup(mut v: Vec<Key>) -> Vec<Key> {
 
 /// Counts for one aggregation over the matched records, shaped by `shape`, so the evaluator
 /// and the SQLite executor can only differ in the numbers.
-fn aggregate(a: &AggKind, docs: &[&Value], m: &Mapping) -> Value {
+fn aggregate(a: &AggKind, docs: &[&Value], m: &Mapping) -> Result<Value> {
     let f = &m.fields[a.field()];
     let nums = |field: &str| -> Vec<f64> {
         docs.iter()
-            .flat_map(|d| keys(d, field, f.ty))
+            .flat_map(|d| keys(d, field, f))
             .filter_map(|k| match k {
                 Key::Num(v) => Some(v),
                 _ => None,
             })
             .collect()
     };
-    match a {
+    Ok(match a {
         AggKind::Terms { field, size, order } => {
             let mut counts: BTreeMap<Key, u64> = BTreeMap::new();
             for d in docs {
-                for k in sorted_dedup(keys(d, field, f.ty)) {
+                for k in sorted_dedup(keys(d, field, f)) {
                     *counts.entry(k).or_insert(0) += 1;
                 }
             }
@@ -235,7 +247,7 @@ fn aggregate(a: &AggKind, docs: &[&Value], m: &Mapping) -> Value {
                     let n = docs
                         .iter()
                         .filter(|d| {
-                            keys(d, field, f.ty).iter().any(|k| match k {
+                            keys(d, field, f).iter().any(|k| match k {
                                 Key::Num(v) => {
                                     r.from.is_none_or(|lo| *v >= lo)
                                         && r.to.is_none_or(|hi| *v < hi)
@@ -256,7 +268,7 @@ fn aggregate(a: &AggKind, docs: &[&Value], m: &Mapping) -> Value {
         } => {
             let mut counts: BTreeMap<i64, u64> = BTreeMap::new();
             for d in docs {
-                let mut seen: Vec<i64> = keys(d, field, f.ty)
+                let mut seen: Vec<i64> = keys(d, field, f)
                     .iter()
                     .filter_map(|k| match k {
                         Key::Num(v) => Some((v / interval).floor() as i64),
@@ -269,7 +281,7 @@ fn aggregate(a: &AggKind, docs: &[&Value], m: &Mapping) -> Value {
                     *counts.entry(b).or_insert(0) += 1;
                 }
             }
-            shape::histogram(&counts, *interval, *min_doc_count)
+            shape::histogram(&counts, *interval, *min_doc_count)?
         }
         AggKind::DateHistogram {
             field,
@@ -278,7 +290,7 @@ fn aggregate(a: &AggKind, docs: &[&Value], m: &Mapping) -> Value {
         } => {
             let mut counts: BTreeMap<i64, u64> = BTreeMap::new();
             for d in docs {
-                let mut seen: Vec<i64> = keys(d, field, f.ty)
+                let mut seen: Vec<i64> = keys(d, field, f)
                     .iter()
                     .filter_map(|k| match k {
                         Key::Num(ms) => Some(bucket_start(*ms as i64, *calendar_interval)),
@@ -291,13 +303,23 @@ fn aggregate(a: &AggKind, docs: &[&Value], m: &Mapping) -> Value {
                     *counts.entry(b).or_insert(0) += 1;
                 }
             }
-            shape::date_histogram(&counts, *calendar_interval, *min_doc_count)
+            shape::date_histogram(&counts, *calendar_interval, *min_doc_count)?
         }
-        AggKind::ValueCount { field } => {
-            shape::single_value(docs.iter().map(|d| keys(d, field, f.ty).len()).sum())
-        }
+        AggKind::ValueCount { field } => shape::single_value(
+            docs.iter()
+                .map(|d| {
+                    let ks = keys(d, field, f);
+                    // A keyword array's repeated value counts once per record, as in Elasticsearch.
+                    if f.array && f.ty == FieldType::Keyword {
+                        sorted_dedup(ks).len()
+                    } else {
+                        ks.len()
+                    }
+                })
+                .sum(),
+        ),
         AggKind::Cardinality { field } => {
-            let all: Vec<Key> = docs.iter().flat_map(|d| keys(d, field, f.ty)).collect();
+            let all: Vec<Key> = docs.iter().flat_map(|d| keys(d, field, f)).collect();
             shape::single_value(sorted_dedup(all).len())
         }
         AggKind::Avg { field }
@@ -305,34 +327,19 @@ fn aggregate(a: &AggKind, docs: &[&Value], m: &Mapping) -> Value {
         | AggKind::Max { field }
         | AggKind::Sum { field }
         | AggKind::Stats { field } => shape::metric(a, Metrics::from_values(&nums(field))),
-    }
-}
-
-fn source_of(doc: &Value, filter: &SourceFilter) -> Option<Value> {
-    let o = doc.as_object()?;
-    match filter {
-        SourceFilter::All(false) => None,
-        SourceFilter::All(true) => Some(Value::Object(
-            o.iter()
-                .filter(|(k, _)| !k.starts_with('_'))
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect(),
-        )),
-        SourceFilter::Fields(fields) => Some(Value::Object(
-            o.iter()
-                .filter(|(k, _)| fields.contains(k))
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect(),
-        )),
-    }
+    })
 }
 
 /// Evaluates a request over the records and answers in Elasticsearch's response shape.
 ///
 /// Hits are ordered by the sort fields, records with an empty sort field last, ties and the
 /// no-sort case by `_id` ascending (as strings). Aggregations are computed over the query's
-/// matches; `post_filter` narrows the hits only, as in Elasticsearch.
+/// matches; `post_filter` narrows the hits only, as in Elasticsearch. `_source` is the record
+/// as given, without its `_`-prefixed keys.
 pub fn evaluate(req: &Request, m: &Mapping, docs: &[Value]) -> Result<Value> {
+    for (i, d) in docs.iter().enumerate() {
+        doc_id(d, i)?;
+    }
     let matched: Vec<&Value> = docs.iter().filter(|d| matches(&req.query, d, m)).collect();
     let mut hits: Vec<&Value> = match &req.post_filter {
         Some(pf) => matched
@@ -342,21 +349,15 @@ pub fn evaluate(req: &Request, m: &Mapping, docs: &[Value]) -> Result<Value> {
             .collect(),
         None => matched.clone(),
     };
-    let ids: Vec<Result<String>> = hits.iter().map(|d| doc_id(d)).collect();
-    if let Some(Err(e)) = ids.iter().find(|r| r.is_err()) {
-        return Err(e.clone());
-    }
-    let sort_key = |d: &Value| -> (Vec<Option<Key>>, String) {
-        let ks = req
-            .sort
+    let id_of = |d: &Value| doc_id(d, 0).unwrap_or_default();
+    let sort_key = |d: &Value| -> Vec<Option<Key>> {
+        req.sort
             .iter()
-            .map(|s| keys(d, &s.field, m.fields[&s.field].ty).into_iter().next())
-            .collect();
-        (ks, doc_id(d).unwrap_or_default())
+            .map(|s| keys(d, &s.field, &m.fields[&s.field]).into_iter().next())
+            .collect()
     };
     hits.sort_by(|a, b| {
-        let (ka, ia) = sort_key(a);
-        let (kb, ib) = sort_key(b);
+        let (ka, kb) = (sort_key(a), sort_key(b));
         for (i, s) in req.sort.iter().enumerate() {
             let ord = match (&ka[i], &kb[i]) {
                 (None, None) => Ordering::Equal,
@@ -375,24 +376,23 @@ pub fn evaluate(req: &Request, m: &Mapping, docs: &[Value]) -> Result<Value> {
                 return ord;
             }
         }
-        ia.cmp(&ib)
+        id_of(a).cmp(&id_of(b))
     });
     let total = hits.len();
     let page: Vec<Value> = hits
         .iter()
         .skip(req.from)
         .take(req.size)
-        .map(|d| shape::hit(&doc_id(d).unwrap_or_default(), source_of(d, &req.source)))
+        .map(|d| shape::hit(&id_of(d), shape::filter_source(source_json(d), &req.source)))
         .collect();
     let aggregations = if req.aggs.is_empty() {
         None
     } else {
-        Some(
-            req.aggs
-                .iter()
-                .map(|a| (a.name.clone(), aggregate(&a.kind, &matched, m)))
-                .collect::<Map<String, Value>>(),
-        )
+        let mut out = Map::new();
+        for a in &req.aggs {
+            out.insert(a.name.clone(), aggregate(&a.kind, &matched, m)?);
+        }
+        Some(out)
     };
     Ok(shape::response(total, page, aggregations))
 }
@@ -400,12 +400,29 @@ pub fn evaluate(req: &Request, m: &Mapping, docs: &[Value]) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
-    fn tokenizes_like_unicode61() {
-        assert_eq!(
-            tokens("Facet-counts, v1.2 (Chat)"),
-            vec!["facet", "counts", "v1", "2", "chat"]
+    fn empty_means_missing_null_wrong_type_or_a_list_where_one_value_belongs() {
+        let m = Mapping::from_json(&json!({"properties": {"n": {"type": "long"}, "tags": {"type": "keyword", "array": true}}})).unwrap();
+        let exists = |field: &str, doc: Value| {
+            matches(
+                &Query::Exists {
+                    field: field.into(),
+                },
+                &doc,
+                &m,
+            )
+        };
+        assert!(!exists("n", json!({"_id": "1"})));
+        assert!(!exists("n", json!({"_id": "1", "n": null})));
+        assert!(!exists("n", json!({"_id": "1", "n": "5"})));
+        assert!(!exists("n", json!({"_id": "1", "n": [5]})));
+        assert!(exists("n", json!({"_id": "1", "n": 5})));
+        assert!(!exists("tags", json!({"_id": "1", "tags": []})));
+        assert!(
+            exists("tags", json!({"_id": "1", "tags": "solo"})),
+            "a single value is a list of one"
         );
     }
 }

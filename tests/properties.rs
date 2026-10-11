@@ -6,6 +6,8 @@
 //! - a terms aggregation's counts add up to the records that have the field;
 //! - a page holds min(size, total - from) hits with distinct ids.
 
+#![cfg(feature = "sqlite")]
+
 use proptest::prelude::*;
 use search_esque::ast::*;
 use search_esque::dsl::{parse_request, to_elasticsearch};
@@ -310,7 +312,7 @@ fn request() -> impl Strategy<Value = Request> {
         prop::collection::vec(agg_kind(), 0..4),
         prop::collection::vec(sort, 0..3),
         0usize..200,
-        0usize..50,
+        0usize..400,
         source,
     )
         .prop_map(

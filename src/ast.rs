@@ -43,6 +43,8 @@ pub enum Query {
     },
     /// Exact match on one value. On a keyword field letter case is ignored (a divergence from
     /// Elasticsearch, where `term` is case-sensitive). On an array field any element may match.
+    /// On a date field a value without a time part means the whole day, as in Elasticsearch
+    /// (checked against 9.5).
     Term {
         field: String,
         value: Scalar,
@@ -62,13 +64,15 @@ pub enum Query {
         lte: Option<Scalar>,
         lt: Option<Scalar>,
     },
-    /// The field has a value (for an array field: at least one element).
+    /// The field has a value that fits its type (for an array field: at least one element).
+    /// A value of the wrong type, or a list where a single value belongs, is empty.
     Exists {
         field: String,
     },
-    /// Word match on a text field, tokens lower-cased and split on non-alphanumerics, the way
-    /// FTS5's `unicode61` tokenizer does. This differs from Elasticsearch's standard analyzer,
-    /// which keeps `doesn't` and `v1.41.0` as single tokens.
+    /// Word match on a text field. Text is split the way FTS5's `unicode61` tokenizer does, on
+    /// Unicode separators and punctuation, and lower-cased; letters, digits, combining marks and
+    /// symbols are token characters (see `tokenize`). This differs from Elasticsearch's standard
+    /// analyzer, which keeps `doesn't` as one token and splits `a+b`.
     Match {
         field: String,
         query: String,
@@ -141,7 +145,8 @@ pub enum AggKind {
         ranges: Vec<RangeBucket>,
     },
     /// Fixed-width buckets on a number field. Empty buckets between the first and last are
-    /// returned when `min_doc_count` is 0, as in Elasticsearch.
+    /// returned when `min_doc_count` is 0, as in Elasticsearch, and a histogram that would span
+    /// more than 65,536 buckets is refused, as it is there.
     Histogram {
         field: String,
         interval: f64,
@@ -166,7 +171,9 @@ pub enum AggKind {
     Sum {
         field: String,
     },
-    /// Number of values, not of records: an array field contributes each element.
+    /// Number of values, not of records: an array field contributes each element, except that
+    /// a keyword array counts a value repeated in one record once, as Elasticsearch's sorted-set
+    /// doc values do.
     ValueCount {
         field: String,
     },

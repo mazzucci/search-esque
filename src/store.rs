@@ -11,6 +11,7 @@ use rusqlite::types::{ToSqlOutput, ValueRef};
 use rusqlite::{params_from_iter, Connection, ToSql};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
+use std::path::Path;
 
 impl ToSql for Param {
     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
@@ -27,25 +28,70 @@ fn db_err(e: rusqlite::Error) -> Error {
     Error::new("sqlite", e.to_string())
 }
 
+/// The store format; bumped when the schema changes, so `open` can tell a stale file.
+pub const FORMAT: &str = "search-esque-store-1";
+
+/// The distinct tokens the bundled SQLite's FTS5 makes of a text with the store's tokenizer
+/// options, sorted. `dev/tokenizer_parity.py` holds `tokenize::tokens` to this.
+pub fn fts_tokens(text: &str) -> Result<Vec<String>> {
+    let conn = Connection::open_in_memory().map_err(db_err)?;
+    conn.execute_batch(&format!(
+        "CREATE VIRTUAL TABLE t USING fts5(x, tokenize='{}'); CREATE VIRTUAL TABLE v USING fts5vocab(t, 'row');",
+        sql::TOKENIZER
+    ))
+    .map_err(db_err)?;
+    conn.execute("INSERT INTO t VALUES (?)", [text])
+        .map_err(db_err)?;
+    let mut st = conn
+        .prepare("SELECT term FROM v ORDER BY term")
+        .map_err(db_err)?;
+    let rows = st
+        .query_map([], |r| r.get::<_, String>(0))
+        .map_err(db_err)?;
+    rows.collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(db_err)
+}
+
 pub struct Store {
     conn: Connection,
     mapping: Mapping,
 }
 
 impl Store {
-    /// A new store file for a mapping. Fails if the file exists.
-    pub fn create(path: &str, mapping: &Mapping) -> Result<Store> {
-        if std::path::Path::new(path).exists() {
+    /// Builds a store file from records in one go. The file is written beside its final name
+    /// and moved into place only when every record loaded, so a failure leaves nothing behind.
+    pub fn build(path: &str, mapping: &Mapping, docs: &[Value]) -> Result<Store> {
+        if Path::new(path).exists() {
             return Err(Error::new("db", format!("{} exists already", path))
                 .hint("remove it, or load into a new file"));
         }
-        let conn = Connection::open(path).map_err(db_err)?;
-        Store::init(conn, mapping)
+        let tmp = format!("{}.building", path);
+        let _ = std::fs::remove_file(&tmp);
+        let result = (|| {
+            let store = Store::init(Connection::open(&tmp).map_err(db_err)?, mapping)?;
+            store.load(docs)?;
+            drop(store);
+            std::fs::rename(&tmp, path)
+                .map_err(|e| Error::new("db", format!("cannot move {} into place: {}", tmp, e)))?;
+            Store::open(path)
+        })();
+        if result.is_err() {
+            let _ = std::fs::remove_file(&tmp);
+        }
+        result
+    }
+
+    /// An empty store file for a mapping. Fails if the file exists.
+    pub fn create(path: &str, mapping: &Mapping) -> Result<Store> {
+        if Path::new(path).exists() {
+            return Err(Error::new("db", format!("{} exists already", path))
+                .hint("remove it, or load into a new file"));
+        }
+        Store::init(Connection::open(path).map_err(db_err)?, mapping)
     }
 
     pub fn in_memory(mapping: &Mapping) -> Result<Store> {
-        let conn = Connection::open_in_memory().map_err(db_err)?;
-        Store::init(conn, mapping)
+        Store::init(Connection::open_in_memory().map_err(db_err)?, mapping)
     }
 
     fn init(conn: Connection, mapping: &Mapping) -> Result<Store> {
@@ -53,8 +99,11 @@ impl Store {
             conn.execute_batch(&stmt).map_err(db_err)?;
         }
         conn.execute(
-            &format!("INSERT INTO {} VALUES ('mapping', ?)", sql::META),
-            [mapping.to_json().to_string()],
+            &format!(
+                "INSERT INTO {} VALUES ('format', ?), ('mapping', ?)",
+                sql::META
+            ),
+            [FORMAT, &mapping.to_json().to_string()],
         )
         .map_err(db_err)?;
         Ok(Store {
@@ -65,19 +114,32 @@ impl Store {
 
     /// An existing store; the mapping is read from the file.
     pub fn open(path: &str) -> Result<Store> {
-        if !std::path::Path::new(path).exists() {
-            return Err(Error::new("db", format!("{} does not exist", path))
+        if !Path::new(path).is_file() {
+            return Err(Error::new("db", format!("{} is not a file", path))
                 .hint("create it with `esque load`"));
         }
         let conn = Connection::open(path).map_err(db_err)?;
-        let text: String = conn
-            .query_row(
-                &format!("SELECT value FROM {} WHERE key = 'mapping'", sql::META),
-                [],
+        let read = |key: &str| -> Result<String> {
+            conn.query_row(
+                &format!("SELECT value FROM {} WHERE key = ?", sql::META),
+                [key],
                 |r| r.get(0),
             )
-            .map_err(|_| Error::new("db", format!("{} is not an esque store", path)))?;
-        let v: Value = serde_json::from_str(&text).map_err(|e| Error::new("db", e.to_string()))?;
+            .map_err(|_| Error::new("db", format!("{} is not an esque store", path)))
+        };
+        let format = read("format")?;
+        if format != FORMAT {
+            return Err(Error::new(
+                "db",
+                format!(
+                    "{} has store format {}, this build reads {}",
+                    path, format, FORMAT
+                ),
+            )
+            .hint("rebuild it with `esque load`"));
+        }
+        let v: Value =
+            serde_json::from_str(&read("mapping")?).map_err(|e| Error::new("db", e.to_string()))?;
         let mapping = Mapping::from_json(&v)?;
         Ok(Store { conn, mapping })
     }
@@ -86,22 +148,21 @@ impl Store {
         &self.mapping
     }
 
-    /// Inserts records (replacing any with the same `_id`) and rebuilds the text index.
+    /// Inserts records (replacing any with the same `_id`) and rebuilds the text index, all
+    /// in one transaction: a bad record leaves the store as it was.
     pub fn load(&self, docs: &[Value]) -> Result<usize> {
         let tx = self.conn.unchecked_transaction().map_err(db_err)?;
         {
             let mut ins = tx
                 .prepare(&sql::insert_statement(&self.mapping))
                 .map_err(db_err)?;
-            for d in docs {
-                let row = sql::row_params(d, &self.mapping)?;
+            for (i, d) in docs.iter().enumerate() {
+                let row = sql::row_params(d, &self.mapping, i)?;
                 ins.execute(params_from_iter(row.iter())).map_err(db_err)?;
             }
         }
-        if let Some(fill) = sql::fts_fill(&self.mapping) {
-            tx.execute(&format!("DELETE FROM {}", sql::FTS), [])
-                .map_err(db_err)?;
-            tx.execute(&fill, []).map_err(db_err)?;
+        for stmt in sql::fts_fill(&self.mapping) {
+            tx.execute(&stmt, []).map_err(db_err)?;
         }
         tx.commit().map_err(db_err)?;
         Ok(docs.len())
@@ -120,12 +181,15 @@ impl Store {
     /// Runs a request and answers in Elasticsearch's response shape, the same shape the
     /// evaluator produces.
     pub fn search(&self, req: &Request) -> Result<Value> {
-        let compiled = sql::compile(req, &self.mapping);
+        let compiled = sql::compile(req, &self.mapping)?;
         let tx = self.conn.unchecked_transaction().map_err(db_err)?;
         let result = self.run(&tx, req, &compiled);
         let _ = tx.execute_batch(&compiled.cleanup);
-        tx.commit().map_err(db_err)?;
-        result
+        match (result, tx.commit()) {
+            (Err(e), _) => Err(e),
+            (Ok(_), Err(e)) => Err(db_err(e)),
+            (Ok(v), Ok(())) => Ok(v),
+        }
     }
 
     fn run(&self, tx: &rusqlite::Transaction, req: &Request, c: &Compiled) -> Result<Value> {
@@ -141,19 +205,20 @@ impl Store {
             .map_err(db_err)?;
         let mut hits = Vec::new();
         if let Some(h) = &c.hits {
-            let cols = sql::columns(&self.mapping);
             let mut st = tx.prepare(&h.sql).map_err(db_err)?;
             let mut rows = st
                 .query(params_from_iter(h.params.iter()))
                 .map_err(db_err)?;
             while let Some(row) = rows.next().map_err(db_err)? {
                 let id: String = row.get(0).map_err(db_err)?;
-                let source = match &req.source {
-                    SourceFilter::All(false) => None,
-                    SourceFilter::All(true) => Some(self.source_of(row, &cols, None)?),
-                    SourceFilter::Fields(fs) => Some(self.source_of(row, &cols, Some(fs))?),
-                };
-                hits.push(shape::hit(&id, source));
+                let text: String = row.get(1).map_err(db_err)?;
+                let source: Value = serde_json::from_str(&text).map_err(|e| {
+                    Error::new(
+                        "sqlite",
+                        format!("record {} has an unreadable _source: {}", id, e),
+                    )
+                })?;
+                hits.push(shape::hit(&id, shape::filter_source(source, &req.source)));
             }
         }
         let aggregations = if req.aggs.is_empty() {
@@ -166,46 +231,6 @@ impl Store {
             Some(out)
         };
         Ok(shape::response(total as usize, hits, aggregations))
-    }
-
-    fn source_of(
-        &self,
-        row: &rusqlite::Row,
-        cols: &[(String, &str)],
-        only: Option<&Vec<String>>,
-    ) -> Result<Value> {
-        let mut out = Map::new();
-        for (i, (name, _)) in cols.iter().enumerate() {
-            if name.starts_with('_') || name.contains("__") {
-                continue;
-            }
-            if let Some(fs) = only {
-                if !fs.contains(name) {
-                    continue;
-                }
-            }
-            let f = &self.mapping.fields[name];
-            let v = row.get_ref(i).map_err(db_err)?;
-            let value = if f.array {
-                match v {
-                    ValueRef::Text(t) => serde_json::from_slice(t).unwrap_or(Value::Array(vec![])),
-                    _ => Value::Array(vec![]),
-                }
-            } else {
-                match (f.ty, v) {
-                    (_, ValueRef::Null) => Value::Null,
-                    (FieldType::Boolean, ValueRef::Integer(i)) => Value::Bool(i != 0),
-                    (_, ValueRef::Integer(i)) => Value::from(i),
-                    (_, ValueRef::Real(x)) => Value::from(x),
-                    (_, ValueRef::Text(t)) => {
-                        Value::String(String::from_utf8_lossy(t).into_owned())
-                    }
-                    (_, ValueRef::Blob(_)) => Value::Null,
-                }
-            };
-            out.insert(name.clone(), value);
-        }
-        Ok(Value::Object(out))
     }
 
     fn key_of(v: ValueRef, ty: FieldType) -> Option<Key> {
@@ -221,7 +246,12 @@ impl Store {
 
     fn aggregate(&self, tx: &rusqlite::Transaction, a: &sql::CompiledAgg) -> Result<Value> {
         let ty = self.mapping.fields[a.kind.field()].ty;
-        let first = &a.statements[0];
+        let first = a.statements.first().ok_or_else(|| {
+            Error::new(
+                "sqlite",
+                format!("aggregation '{}' compiled to nothing", a.name),
+            )
+        })?;
         Ok(match &a.kind {
             AggKind::Terms { size, order, .. } => {
                 let mut counts: Vec<(Key, u64)> = Vec::new();
@@ -250,7 +280,7 @@ impl Store {
                 ..
             } => {
                 let counts = Store::bucket_counts(tx, first)?;
-                shape::histogram(&counts, *interval, *min_doc_count)
+                shape::histogram(&counts, *interval, *min_doc_count)?
             }
             AggKind::DateHistogram {
                 calendar_interval,
@@ -258,7 +288,7 @@ impl Store {
                 ..
             } => {
                 let counts = Store::bucket_counts(tx, first)?;
-                shape::date_histogram(&counts, *calendar_interval, *min_doc_count)
+                shape::date_histogram(&counts, *calendar_interval, *min_doc_count)?
             }
             AggKind::ValueCount { .. } | AggKind::Cardinality { .. } => {
                 let n: i64 = Store::scalar(tx, first)?;

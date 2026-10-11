@@ -26,6 +26,7 @@ pub mod sql;
 #[cfg(feature = "sqlite")]
 pub mod store;
 pub mod timeutil;
+pub mod tokenize;
 
 pub use ast::Request;
 pub use error::{Error, Result};

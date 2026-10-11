@@ -4,13 +4,17 @@
 //! executor by running the compiled statements. Both hand what they counted to these functions,
 //! so the two can only differ in the numbers, never in the shape. Everything here is pure.
 
-use crate::ast::{AggKind, CalendarInterval, RangeBucket, TermsOrder};
+use crate::ast::{AggKind, CalendarInterval, RangeBucket, SourceFilter, TermsOrder};
 use crate::dsl::num_json;
+use crate::error::{Error, Result};
 use crate::mapping::FieldType;
 use crate::timeutil::{format_iso, next_bucket};
 use serde_json::{json, Map, Value};
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
+
+/// Elasticsearch's default `search.max_buckets`: a histogram that would need more is refused.
+pub const MAX_BUCKETS: u64 = 65_536;
 
 /// A comparable view of a field value. Ordered within a kind; kinds never mix for one field.
 #[derive(Debug, Clone, PartialEq)]
@@ -138,12 +142,27 @@ pub fn range(buckets: &[(&RangeBucket, u64)]) -> Value {
     json!({"buckets": out})
 }
 
+fn too_many(n: u64, what: &str) -> Error {
+    Error::new(
+        "aggs",
+        format!(
+            "the {} would have {} buckets, more than {}",
+            what, n, MAX_BUCKETS
+        ),
+    )
+    .hint("use a larger interval or narrow the query")
+}
+
 /// A `histogram` from bucket index (value divided by interval, floored) to count. Empty
 /// buckets between the first and last are filled when `min_doc_count` allows, as in
-/// Elasticsearch.
-pub fn histogram(counts: &BTreeMap<i64, u64>, interval: f64, min_doc_count: u64) -> Value {
+/// Elasticsearch, and a histogram that would exceed `MAX_BUCKETS` is refused as it is there.
+pub fn histogram(counts: &BTreeMap<i64, u64>, interval: f64, min_doc_count: u64) -> Result<Value> {
     let mut out = Vec::new();
     if let (Some(&lo), Some(&hi)) = (counts.keys().next(), counts.keys().next_back()) {
+        let span = (hi as i128 - lo as i128 + 1) as u128;
+        if span > MAX_BUCKETS as u128 {
+            return Err(too_many(span.min(u64::MAX as u128) as u64, "histogram"));
+        }
         for b in lo..=hi {
             let c = counts.get(&b).copied().unwrap_or(0);
             if c >= min_doc_count {
@@ -151,19 +170,25 @@ pub fn histogram(counts: &BTreeMap<i64, u64>, interval: f64, min_doc_count: u64)
             }
         }
     }
-    json!({"buckets": out})
+    Ok(json!({"buckets": out}))
 }
 
-/// A `date_histogram` from bucket start (epoch milliseconds) to count, gaps filled.
+/// A `date_histogram` from bucket start (epoch milliseconds) to count, gaps filled, with the
+/// same bucket cap.
 pub fn date_histogram(
     counts: &BTreeMap<i64, u64>,
     iv: CalendarInterval,
     min_doc_count: u64,
-) -> Value {
+) -> Result<Value> {
     let mut out = Vec::new();
     if let (Some(&lo), Some(&hi)) = (counts.keys().next(), counts.keys().next_back()) {
         let mut b = lo;
+        let mut n: u64 = 0;
         while b <= hi {
+            n += 1;
+            if n > MAX_BUCKETS {
+                return Err(too_many(n, "date_histogram"));
+            }
             let c = counts.get(&b).copied().unwrap_or(0);
             if c >= min_doc_count {
                 out.push(json!({"key_as_string": format_iso(b), "key": b, "doc_count": c}));
@@ -171,7 +196,7 @@ pub fn date_histogram(
             b = next_bucket(b, iv);
         }
     }
-    json!({"buckets": out})
+    Ok(json!({"buckets": out}))
 }
 
 /// What the metric aggregations need: how many values, the smallest, the largest, the sum.
@@ -184,6 +209,8 @@ pub struct Metrics {
 }
 
 impl Metrics {
+    /// Sums with Kahan-Babuska-Neumaier compensation, as SQLite's `TOTAL()` and Elasticsearch do,
+    /// so the engines agree on fractional data to the last bit in all but pathological orders.
     pub fn from_values(nums: &[f64]) -> Metrics {
         let min = nums.iter().cloned().fold(None, |acc: Option<f64>, v| {
             Some(acc.map_or(v, |a| a.min(v)))
@@ -191,11 +218,21 @@ impl Metrics {
         let max = nums.iter().cloned().fold(None, |acc: Option<f64>, v| {
             Some(acc.map_or(v, |a| a.max(v)))
         });
+        let (mut sum, mut comp) = (0.0f64, 0.0f64);
+        for &v in nums {
+            let t = sum + v;
+            if sum.abs() >= v.abs() {
+                comp += (sum - t) + v;
+            } else {
+                comp += (v - t) + sum;
+            }
+            sum = t;
+        }
         Metrics {
             count: nums.len(),
             min,
             max,
-            sum: nums.iter().sum(),
+            sum: sum + comp,
         }
     }
 
@@ -221,6 +258,20 @@ pub fn metric(kind: &AggKind, m: Metrics) -> Value {
 
 pub fn single_value(n: usize) -> Value {
     json!({"value": n})
+}
+
+/// The `_source` a hit carries: the record as stored, none, or the requested fields only.
+pub fn filter_source(source: Value, filter: &SourceFilter) -> Option<Value> {
+    match filter {
+        SourceFilter::All(false) => None,
+        SourceFilter::All(true) => Some(source),
+        SourceFilter::Fields(fields) => Some(match source {
+            Value::Object(o) => {
+                Value::Object(o.into_iter().filter(|(k, _)| fields.contains(k)).collect())
+            }
+            other => other,
+        }),
+    }
 }
 
 /// One hit: `_id`, a null `_score` (ranking is not part of the profile yet), and `_source`
@@ -277,5 +328,29 @@ mod tests {
             json!([{"key": "b", "doc_count": 5}, {"key": "a", "doc_count": 3}])
         );
         assert_eq!(v["sum_other_doc_count"], json!(3));
+    }
+
+    #[test]
+    fn histograms_are_capped() {
+        let mut counts = BTreeMap::new();
+        counts.insert(0, 1);
+        counts.insert(1_000_000, 1);
+        assert!(histogram(&counts, 1.0, 0).is_err());
+        assert!(
+            histogram(&counts, 1.0, 1).is_err(),
+            "the cap is on the span, not on what is shown"
+        );
+        let mut small = BTreeMap::new();
+        small.insert(-2, 1);
+        small.insert(1, 2);
+        let v = histogram(&small, 0.5, 0).unwrap();
+        assert_eq!(v["buckets"].as_array().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn compensated_sum() {
+        let m = Metrics::from_values(&[0.1, 0.2, 0.3]);
+        assert_eq!(m.sum, 0.6);
+        assert_eq!(m.avg(), Some(0.19999999999999998));
     }
 }

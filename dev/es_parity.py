@@ -161,9 +161,13 @@ def esque_eval(request):
 
 def build_db():
     """Loads the corpus into a fresh SQLite store through the CLI, for the sql engine."""
+    import atexit
+    import shutil
     import tempfile
     global DB
-    DB = str(Path(tempfile.mkdtemp()) / "parity.db")
+    folder = tempfile.mkdtemp()
+    atexit.register(shutil.rmtree, folder, True)
+    DB = str(Path(folder) / "parity.db")
     p = subprocess.run([str(ESQUE), "load", "--mapping", str(FX / "mapping.json"), "--docs", str(FX / "docs.json"), "--db", DB],
                        capture_output=True, text=True)
     assert p.returncode == 0, p.stdout + p.stderr

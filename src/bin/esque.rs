@@ -12,6 +12,10 @@
 //!       runs the request on the store
 //!   esque mapping M.json
 //!       validates a mapping and prints its canonical form
+//!   esque tokens "some text"
+//!       the tokens the profile splits a text into (FTS5 unicode61 rules)
+//!   esque fts-tokens "some text"
+//!       the distinct tokens the store's own FTS5 produces, to check the two agree
 //!
 //! Every answer is JSON on stdout. A refusal prints `{"error": {...}}` and exits with 2.
 
@@ -24,7 +28,7 @@ use std::process::exit;
 
 fn usage() -> ! {
     eprintln!(
-        "usage:\n  esque parse   --mapping M.json (REQUEST_JSON | --request FILE)\n  esque compile --mapping M.json (REQUEST_JSON | --request FILE)\n  esque eval    --mapping M.json --docs DOCS.json (REQUEST_JSON | --request FILE)\n  esque load    --mapping M.json --docs DOCS.json --db STORE.db\n  esque search  --db STORE.db (REQUEST_JSON | --request FILE)\n  esque mapping M.json"
+        "usage:\n  esque parse   --mapping M.json (REQUEST_JSON | --request FILE)\n  esque compile --mapping M.json (REQUEST_JSON | --request FILE)\n  esque eval    --mapping M.json --docs DOCS.json (REQUEST_JSON | --request FILE)\n  esque load    --mapping M.json --docs DOCS.json --db STORE.db\n  esque search  --db STORE.db (REQUEST_JSON | --request FILE)\n  esque mapping M.json\n  esque tokens \"some text\""
     );
     exit(1)
 }
@@ -132,7 +136,7 @@ fn main() {
         }),
         "compile" => mapping_of(&a).and_then(|m| {
             let req = parse_request(&request_of(&a)?, &m)?;
-            serde_json::to_value(compile(&req, &m)).map_err(|e| Error::new("$", e.to_string()))
+            serde_json::to_value(compile(&req, &m)?).map_err(|e| Error::new("$", e.to_string()))
         }),
         "eval" => mapping_of(&a).and_then(|m| {
             let req = parse_request(&request_of(&a)?, &m)?;
@@ -143,9 +147,8 @@ fn main() {
         "load" => mapping_of(&a).and_then(|m| {
             let docs = read_docs(&a.docs.clone().unwrap_or_else(|| usage()))?;
             let db = a.db.clone().unwrap_or_else(|| usage());
-            let store = search_esque::store::Store::create(&db, &m)?;
-            let n = store.load(&docs)?;
-            Ok(json!({"db": db, "records": n, "fields": m.fields.len()}))
+            let store = search_esque::store::Store::build(&db, &m, &docs)?;
+            Ok(json!({"db": db, "records": store.count()?, "fields": m.fields.len()}))
         }),
         #[cfg(feature = "sqlite")]
         "search" => {
@@ -154,6 +157,15 @@ fn main() {
                 let req = parse_request(&request_of(&a)?, store.mapping())?;
                 store.search(&req)
             })
+        }
+        "tokens" => Ok(serde_json::to_value(search_esque::tokenize::tokens(
+            a.positional.first().unwrap_or_else(|| usage()),
+        ))
+        .unwrap()),
+        #[cfg(feature = "sqlite")]
+        "fts-tokens" => {
+            search_esque::store::fts_tokens(a.positional.first().unwrap_or_else(|| usage()))
+                .map(|t| serde_json::to_value(t).unwrap())
         }
         _ => usage(),
     };

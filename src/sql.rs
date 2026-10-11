@@ -1,14 +1,16 @@
 //! SQL for SQLite: the schema a mapping needs, and the statements a request compiles to.
 //!
 //! This module generates text and parameters and never touches a database, so it belongs to
-//! the core and compiles to WebAssembly. The executor in `store` runs what it produces.
+//! the core and compiles to WebAssembly. The executor in `store` runs what it produces; anyone
+//! else may run it too, against a store built with [`schema`] and [`row_params`].
 //!
-//! The schema is one `docs` table with a column per field plus shadow columns: `f__cf`, the
-//! case-folded copy of a keyword (and of each element of a keyword array), so `term` and
-//! `prefix` ignore case; `f__ts`, a date as epoch milliseconds, so ranges and buckets compare
-//! numbers. Array fields hold a JSON array and are queried through `json_each`. Text fields
-//! are indexed in an FTS5 table with the `unicode61` tokenizer, which splits exactly where the
-//! evaluator's `tokens` does.
+//! The schema is one `docs` table with the original record in `_source`, a column per field,
+//! and shadow columns: `f__cf`, the case-folded copy of a keyword (and of each element of a
+//! keyword array), so `term` and `prefix` ignore case; `f__ts`, a date as epoch milliseconds
+//! (an array of them for a date array), so ranges and buckets compare numbers. Array fields
+//! hold a JSON array and are queried through `json_each`. Text fields are indexed in an FTS5
+//! table, one row per value (so an array's elements never form a phrase together), with the
+//! `unicode61` tokenizer and diacritics kept, which is exactly how [`crate::tokenize`] splits.
 //!
 //! A request runs as one read transaction: the matching ids are materialised once into a temp
 //! table, and the total, the hits and every aggregation are computed from that set. The filter
@@ -17,10 +19,10 @@
 //! validates field names.
 
 use crate::ast::*;
-use crate::error::Result;
-use crate::eval::tokens;
+use crate::error::{Error, Result};
 use crate::mapping::{Field, FieldType, Mapping};
-use crate::timeutil::{parse_bound, parse_iso};
+use crate::timeutil::{parse_bound, parse_iso, MS_PER_DAY};
+use crate::tokenize::tokens;
 use serde::Serialize;
 use serde_json::Value;
 
@@ -43,29 +45,46 @@ pub const DOCS: &str = "docs";
 pub const FTS: &str = "fts";
 pub const MATCHED: &str = "esque_matched";
 pub const META: &str = "esque_meta";
+pub const SOURCE: &str = "_source";
+/// The FTS5 tokenizer the profile is defined by (see `tokenize`).
+pub const TOKENIZER: &str = "unicode61 remove_diacritics 0";
 
 /// Double-quoted identifier. Field names are validated by the mapping (letters, digits, `_`
-/// and `-`), so no quote can appear inside.
+/// and `-`, no `__`); the quote is doubled anyway, as defence in depth.
 fn ident(name: &str) -> String {
-    format!("\"{}\"", name)
+    format!("\"{}\"", name.replace('"', "\"\""))
 }
 
 fn col(name: &str) -> String {
     format!("d.{}", ident(name))
 }
 
+fn field<'a>(m: &'a Mapping, name: &str) -> Result<&'a Field> {
+    m.fields.get(name).ok_or_else(|| {
+        Error::new(
+            "$",
+            format!("the request names a field the mapping lacks: '{}'", name),
+        )
+    })
+}
+
 // ---------------------------------------------------------------- schema
 
-/// The table's columns in order: `_id`, then per field its column and its shadow columns.
+/// The table's columns in order: `_id`, `_source`, then per field its column and its shadow
+/// columns. Declared types are affinities; numbers and arrays get none, so a value is stored
+/// exactly as given (10.0 stays a real, an integer stays an integer).
 pub fn columns(m: &Mapping) -> Vec<(String, &'static str)> {
-    let mut cols = vec![("_id".to_string(), "TEXT PRIMARY KEY")];
+    let mut cols = vec![
+        ("_id".to_string(), "TEXT PRIMARY KEY"),
+        (SOURCE.to_string(), "TEXT"),
+    ];
     for (name, f) in &m.fields {
         let ty = if f.array {
             "TEXT"
         } else {
             match f.ty {
                 FieldType::Keyword | FieldType::Text | FieldType::Date => "TEXT",
-                FieldType::Number => "NUMERIC",
+                FieldType::Number => "",
                 FieldType::Boolean => "INTEGER",
             }
         };
@@ -74,17 +93,19 @@ pub fn columns(m: &Mapping) -> Vec<(String, &'static str)> {
             cols.push((format!("{}__cf", name), "TEXT"));
         }
         if f.ty == FieldType::Date {
-            cols.push((format!("{}__ts", name), "INTEGER"));
+            cols.push((
+                format!("{}__ts", name),
+                if f.array { "TEXT" } else { "INTEGER" },
+            ));
         }
     }
     cols
 }
 
-fn text_fields(m: &Mapping) -> Vec<&String> {
+fn text_fields(m: &Mapping) -> Vec<(&String, &Field)> {
     m.fields
         .iter()
         .filter(|(_, f)| f.ty == FieldType::Text)
-        .map(|(n, _)| n)
         .collect()
 }
 
@@ -92,7 +113,7 @@ fn text_fields(m: &Mapping) -> Vec<&String> {
 pub fn schema(m: &Mapping) -> Vec<String> {
     let cols: Vec<String> = columns(m)
         .iter()
-        .map(|(n, t)| format!("{} {}", ident(n), t))
+        .map(|(n, t)| format!("{} {}", ident(n), t).trim_end().to_string())
         .collect();
     let mut out = vec![
         format!("CREATE TABLE {} ({})", DOCS, cols.join(", ")),
@@ -100,20 +121,23 @@ pub fn schema(m: &Mapping) -> Vec<String> {
     ];
     let texts = text_fields(m);
     if !texts.is_empty() {
-        let names: Vec<String> = texts.iter().map(|n| ident(n)).collect();
+        let names: Vec<String> = texts.iter().map(|(n, _)| ident(n)).collect();
         out.push(format!(
-            "CREATE VIRTUAL TABLE {} USING fts5({} UNINDEXED, {}, tokenize='unicode61')",
+            "CREATE VIRTUAL TABLE {} USING fts5({} UNINDEXED, {}, tokenize='{}')",
             FTS,
             ident("_id"),
-            names.join(", ")
+            names.join(", "),
+            TOKENIZER
         ));
     }
     for (name, f) in &m.fields {
         if f.aggregatable && !f.array {
-            let c = if f.ty == FieldType::Date {
-                format!("{}__ts", name)
-            } else {
-                name.clone()
+            // The column the filters read: the case-folded shadow for keywords, the timestamp
+            // for dates, the field itself otherwise.
+            let c = match f.ty {
+                FieldType::Keyword => format!("{}__cf", name),
+                FieldType::Date => format!("{}__ts", name),
+                _ => name.clone(),
             };
             out.push(format!(
                 "CREATE INDEX {} ON {} ({})",
@@ -136,40 +160,59 @@ pub fn insert_statement(m: &Mapping) -> String {
     )
 }
 
-/// Fills the FTS table from the docs table, once all rows are in.
-pub fn fts_fill(m: &Mapping) -> Option<String> {
+/// Fills the FTS table from the docs table once all rows are in: one row for every record's
+/// scalar text fields, and one row per element for each text array field.
+pub fn fts_fill(m: &Mapping) -> Vec<String> {
     let texts = text_fields(m);
     if texts.is_empty() {
-        return None;
+        return Vec::new();
     }
-    let names: Vec<String> = texts.iter().map(|n| ident(n)).collect();
-    Some(format!(
-        "INSERT INTO {} ({}, {}) SELECT {}, {} FROM {}",
-        FTS,
-        ident("_id"),
-        names.join(", "),
-        ident("_id"),
-        names.join(", "),
-        DOCS
-    ))
+    let mut out = vec![format!("DELETE FROM {}", FTS)];
+    let scalars: Vec<String> = texts
+        .iter()
+        .filter(|(_, f)| !f.array)
+        .map(|(n, _)| ident(n))
+        .collect();
+    if !scalars.is_empty() {
+        out.push(format!(
+            "INSERT INTO {} ({}, {}) SELECT {}, {} FROM {}",
+            FTS,
+            ident("_id"),
+            scalars.join(", "),
+            ident("_id"),
+            scalars.join(", "),
+            DOCS
+        ));
+    }
+    for (n, _) in texts.iter().filter(|(_, f)| f.array) {
+        out.push(format!(
+            "INSERT INTO {} ({}, {}) SELECT {}, j.value FROM {}, json_each({}) j",
+            FTS,
+            ident("_id"),
+            ident(n),
+            ident("_id"),
+            DOCS,
+            ident(n)
+        ));
+    }
+    out
 }
 
-fn doc_id(doc: &Value) -> Result<String> {
+fn doc_id(doc: &Value, index: usize) -> Result<String> {
     match doc.get("_id") {
-        Some(Value::String(s)) => Ok(s.clone()),
+        Some(Value::String(s)) if !s.is_empty() => Ok(s.clone()),
         Some(Value::Number(n)) => Ok(n.to_string()),
-        _ => Err(crate::error::Error::new(
-            "$",
-            "every record needs an _id (string or number)",
+        _ => Err(Error::new(
+            format!("$[{}]", index),
+            "every record needs an _id (a non-empty string or a number)",
         )),
     }
 }
 
 fn scalar_param(v: &Value, ty: FieldType) -> Param {
     match (ty, v) {
-        (FieldType::Keyword | FieldType::Text | FieldType::Date, Value::String(s)) => {
-            Param::Text(s.clone())
-        }
+        (FieldType::Keyword | FieldType::Text, Value::String(s)) => Param::Text(s.clone()),
+        (FieldType::Date, Value::String(s)) if parse_iso(s).is_some() => Param::Text(s.clone()),
         (FieldType::Number, Value::Number(n)) => match n.as_i64() {
             Some(i) => Param::Int(i),
             None => n.as_f64().map(Param::Real).unwrap_or(Param::Null),
@@ -179,21 +222,39 @@ fn scalar_param(v: &Value, ty: FieldType) -> Param {
     }
 }
 
-/// The parameters for one record, in column order. Values that do not fit the field's type
-/// are stored as empty, which is how the evaluator treats them too.
-pub fn row_params(doc: &Value, m: &Mapping) -> Result<Vec<Param>> {
-    let mut out = vec![Param::Text(doc_id(doc)?)];
+/// The record as `_source`: everything but the `_`-prefixed keys, as given.
+pub fn source_json(doc: &Value) -> Value {
+    match doc.as_object() {
+        Some(o) => Value::Object(
+            o.iter()
+                .filter(|(k, _)| !k.starts_with('_'))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+        ),
+        None => Value::Object(Default::default()),
+    }
+}
+
+/// The parameters for one record, in column order. A value that does not fit the field's
+/// type is stored as empty (the evaluator treats it as empty too); `_source` keeps the record
+/// as it was.
+pub fn row_params(doc: &Value, m: &Mapping, index: usize) -> Result<Vec<Param>> {
+    let mut out = vec![
+        Param::Text(doc_id(doc, index)?),
+        Param::Text(source_json(doc).to_string()),
+    ];
     for (name, f) in &m.fields {
         let v = doc.get(name).unwrap_or(&Value::Null);
         if f.array {
-            let items: Vec<Value> = match v {
-                Value::Array(a) => a.iter().filter(|x| !x.is_null()).cloned().collect(),
+            let items: Vec<&Value> = match v {
+                Value::Array(a) => a.iter().filter(|x| !x.is_null()).collect(),
                 Value::Null => Vec::new(),
-                other => vec![other.clone()],
+                other => vec![other],
             };
             let kept: Vec<Value> = items
                 .into_iter()
                 .filter(|x| scalar_param(x, f.ty) != Param::Null)
+                .cloned()
                 .collect();
             out.push(Param::Text(Value::Array(kept.clone()).to_string()));
             if f.ty == FieldType::Keyword {
@@ -203,9 +264,21 @@ pub fn row_params(doc: &Value, m: &Mapping) -> Result<Vec<Param>> {
                     .collect();
                 out.push(Param::Text(Value::Array(folded).to_string()));
             }
+            if f.ty == FieldType::Date {
+                let stamps: Vec<Value> = kept
+                    .iter()
+                    .filter_map(|x| x.as_str().and_then(parse_iso))
+                    .map(Value::from)
+                    .collect();
+                out.push(Param::Text(Value::Array(stamps).to_string()));
+            }
             continue;
         }
-        let p = scalar_param(v, f.ty);
+        let p = match v {
+            // A list where a single value belongs is empty, as in the evaluator.
+            Value::Array(_) => Param::Null,
+            _ => scalar_param(v, f.ty),
+        };
         if f.ty == FieldType::Keyword {
             let cf = match &p {
                 Param::Text(s) => Param::Text(s.to_lowercase()),
@@ -294,8 +367,8 @@ fn leaf(expr: String) -> String {
 }
 
 /// The WHERE predicate for a query, pushing bound parameters in order of appearance.
-pub fn predicate(q: &Query, m: &Mapping, params: &mut Vec<Param>) -> String {
-    match q {
+pub fn predicate(q: &Query, m: &Mapping, params: &mut Vec<Param>) -> Result<String> {
+    Ok(match q {
         Query::MatchAll => "1".to_string(),
         Query::Bool {
             must,
@@ -306,10 +379,10 @@ pub fn predicate(q: &Query, m: &Mapping, params: &mut Vec<Param>) -> String {
         } => {
             let mut parts: Vec<String> = Vec::new();
             for c in must.iter().chain(filter) {
-                parts.push(format!("({})", predicate(c, m, params)));
+                parts.push(format!("({})", predicate(c, m, params)?));
             }
             for c in must_not {
-                parts.push(format!("NOT ({})", predicate(c, m, params)));
+                parts.push(format!("NOT ({})", predicate(c, m, params)?));
             }
             if !should.is_empty() {
                 // Lucene's rule, as the evaluator: with no required clause at least one
@@ -320,10 +393,10 @@ pub fn predicate(q: &Query, m: &Mapping, params: &mut Vec<Param>) -> String {
                     minimum_should_match.unwrap_or(0)
                 };
                 if needed >= 1 {
-                    let alts: Vec<String> = should
-                        .iter()
-                        .map(|c| format!("({})", predicate(c, m, params)))
-                        .collect();
+                    let mut alts = Vec::new();
+                    for c in should {
+                        alts.push(format!("({})", predicate(c, m, params)?));
+                    }
                     parts.push(format!("({})", alts.join(" OR ")));
                 }
             }
@@ -333,39 +406,55 @@ pub fn predicate(q: &Query, m: &Mapping, params: &mut Vec<Param>) -> String {
                 parts.join(" AND ")
             }
         }
-        Query::Term { field, value } => {
-            let f = &m.fields[field];
+        Query::Term { field: name, value } => {
+            let f = field(m, name)?;
+            // A date without a time part means the whole day, as in Elasticsearch.
+            if let (FieldType::Date, Scalar::Str(s)) = (f.ty, value) {
+                if s.len() == 10 {
+                    let (Some(lo), Some(hi)) = (parse_bound(s, false), parse_bound(s, true)) else {
+                        return Ok("0".to_string());
+                    };
+                    params.push(Param::Int(lo));
+                    params.push(Param::Int(hi));
+                    return Ok(leaf(per_value(f, &cmp_col(name, f), |v| {
+                        format!("{} >= ? AND {} <= ?", v, v)
+                    })));
+                }
+            }
             let p = scalar_to_param(value, f.ty);
             if p == Param::Null {
-                return "0".to_string();
+                return Ok("0".to_string());
             }
             params.push(p);
-            leaf(per_value(f, &cmp_col(field, f), |v| format!("{} = ?", v)))
+            leaf(per_value(f, &cmp_col(name, f), |v| format!("{} = ?", v)))
         }
-        Query::Terms { field, values } => {
-            let f = &m.fields[field];
+        Query::Terms {
+            field: name,
+            values,
+        } => {
+            let f = field(m, name)?;
             let ps: Vec<Param> = values
                 .iter()
                 .map(|v| scalar_to_param(v, f.ty))
                 .filter(|p| *p != Param::Null)
                 .collect();
             if ps.is_empty() {
-                return "0".to_string();
+                return Ok("0".to_string());
             }
             let marks = vec!["?"; ps.len()].join(", ");
             params.extend(ps);
-            leaf(per_value(f, &cmp_col(field, f), |v| {
+            leaf(per_value(f, &cmp_col(name, f), |v| {
                 format!("{} IN ({})", v, marks)
             }))
         }
         Query::Range {
-            field,
+            field: name,
             gte,
             gt,
             lte,
             lt,
         } => {
-            let f = &m.fields[field];
+            let f = field(m, name)?;
             let mut conds: Vec<(&str, Param)> = Vec::new();
             for (op, bound, round_up) in [
                 (">=", gte, false),
@@ -381,59 +470,67 @@ pub fn predicate(q: &Query, m: &Mapping, params: &mut Vec<Param>) -> String {
                         _ => scalar_to_param(b, f.ty),
                     };
                     if p == Param::Null {
-                        return "0".to_string();
+                        return Ok("0".to_string());
                     }
                     conds.push((op, p));
                 }
             }
             let ops: Vec<&str> = conds.iter().map(|(op, _)| *op).collect();
             params.extend(conds.into_iter().map(|(_, p)| p));
-            leaf(per_value(f, &cmp_col(field, f), |v| {
+            leaf(per_value(f, &cmp_col(name, f), |v| {
                 ops.iter()
                     .map(|op| format!("{} {} ?", v, op))
                     .collect::<Vec<_>>()
                     .join(" AND ")
             }))
         }
-        Query::Exists { field } => {
-            let f = &m.fields[field];
-            if f.array {
-                leaf(format!("json_array_length({}) > 0", col(field)))
+        Query::Exists { field: name } => {
+            let f = field(m, name)?;
+            // Dates: a value that did not parse is empty, so the timestamp column decides.
+            let c = if f.ty == FieldType::Date {
+                col(&format!("{}__ts", name))
             } else {
-                leaf(format!("{} IS NOT NULL", col(field)))
+                col(name)
+            };
+            if f.array {
+                leaf(format!("json_array_length({}) > 0", c))
+            } else {
+                leaf(format!("{} IS NOT NULL", c))
             }
         }
         Query::Match {
-            field,
+            field: name,
             query,
             operator,
         } => {
+            field(m, name)?;
             let toks: Vec<String> = tokens(query).into_iter().map(|t| fts_quote(&t)).collect();
             if toks.is_empty() {
-                return "0".to_string();
+                return Ok("0".to_string());
             }
             let joined = match operator {
                 Operator::Or => toks.join(" OR "),
                 Operator::And => toks.join(" "),
             };
-            leaf(fts_in(field, format!("({})", joined), params))
+            leaf(fts_in(name, format!("({})", joined), params))
         }
-        Query::MatchPhrase { field, query } => {
+        Query::MatchPhrase { field: name, query } => {
+            field(m, name)?;
             let toks = tokens(query);
             if toks.is_empty() {
-                return "0".to_string();
+                return Ok("0".to_string());
             }
-            leaf(fts_in(field, fts_quote(&toks.join(" ")), params))
+            leaf(fts_in(name, fts_quote(&toks.join(" ")), params))
         }
-        Query::Prefix { field, value } => {
-            let f = &m.fields[field];
+        Query::Prefix { field: name, value } => {
+            let f = field(m, name)?;
             let want = value.to_lowercase();
             if f.ty == FieldType::Text {
                 // A prefix with a separator inside cannot start any token.
                 if tokens(value) != vec![want.clone()] {
-                    return "0".to_string();
+                    return Ok("0".to_string());
                 }
-                return leaf(fts_in(field, format!("{}*", fts_quote(&want)), params));
+                return Ok(leaf(fts_in(name, format!("{}*", fts_quote(&want)), params)));
             }
             let pattern = format!(
                 "{}%",
@@ -442,11 +539,11 @@ pub fn predicate(q: &Query, m: &Mapping, params: &mut Vec<Param>) -> String {
                     .replace('_', "\\_")
             );
             params.push(Param::Text(pattern));
-            leaf(per_value(f, &cmp_col(field, f), |v| {
+            leaf(per_value(f, &cmp_col(name, f), |v| {
                 format!("{} LIKE ? ESCAPE '\\'", v)
             }))
         }
-    }
+    })
 }
 
 // ---------------------------------------------------------------- the request
@@ -467,7 +564,7 @@ pub struct Compiled {
     pub cleanup: String,
     /// `SELECT COUNT(*)` of the hits (after `post_filter`).
     pub total: Statement,
-    /// The page of hits, `SELECT d.*` in column order; absent when `size` is 0.
+    /// The page of hits: `_id` and `_source`; absent when `size` is 0.
     pub hits: Option<Statement>,
     pub aggs: Vec<CompiledAgg>,
 }
@@ -486,37 +583,45 @@ fn floor(x: &str) -> String {
 
 /// The start of the calendar bucket holding a millisecond timestamp, as milliseconds, through
 /// SQLite's date functions. Floor division keeps dates before 1970 on the right day.
-fn date_bucket(ts_col: &str, iv: CalendarInterval) -> String {
+fn date_bucket(ts: &str, iv: CalendarInterval) -> String {
     let modifier = match iv {
         CalendarInterval::Day => "start of day",
         CalendarInterval::Month => "start of month",
         CalendarInterval::Year => "start of year",
     };
-    let seconds = format!(
-        "(({c}) - ((({c}) % 1000) + 1000) % 1000) / 1000",
-        c = ts_col
-    );
+    let seconds = format!("(({c}) - ((({c}) % 1000) + 1000) % 1000) / 1000", c = ts);
     format!(
         "CAST(strftime('%s', {}, 'unixepoch', '{}') AS INTEGER) * 1000",
         seconds, modifier
     )
 }
 
-fn compile_agg(a: &Agg, m: &Mapping) -> CompiledAgg {
+fn compile_agg(a: &Agg, m: &Mapping) -> Result<CompiledAgg> {
     let name = a.kind.field();
-    let f = &m.fields[name];
+    let f = field(m, name)?;
     let column = agg_col(name, f);
     let from = from_matched();
+    let id = ident("_id");
     let stmt = |sql: String, params: Vec<Param>| Statement { sql, params };
+    // Each value of the field once per record, for the aggregations that count values.
+    let values_from = if f.array {
+        format!("{}, json_each({}) j", from, column)
+    } else {
+        from.clone()
+    };
+    let value = if f.array {
+        "j.value".to_string()
+    } else {
+        column.clone()
+    };
     let statements = match &a.kind {
         AggKind::Terms { .. } => {
             if f.array {
                 vec![stmt(
                     format!(
-                        "SELECT j.value, COUNT(DISTINCT d.{id}) {from}, json_each({col}) j GROUP BY j.value",
-                        id = ident("_id"),
-                        from = from,
-                        col = column
+                        "SELECT j.value, COUNT(DISTINCT d.{id}) {vf} GROUP BY j.value",
+                        id = id,
+                        vf = values_from
                     ),
                     vec![],
                 )]
@@ -556,103 +661,74 @@ fn compile_agg(a: &Agg, m: &Mapping) -> CompiledAgg {
         AggKind::Histogram { interval, .. } => {
             // The quotient is computed once, under an alias, so the interval binds once and the
             // floor expression can mention it three times.
-            if f.array {
-                vec![stmt(
-                    format!(
-                        "SELECT {b} AS b, COUNT(DISTINCT id) FROM (SELECT d.{id} AS id, j.value / ? AS q {from}, json_each({col}) j) GROUP BY b",
-                        b = floor("q"),
-                        id = ident("_id"),
-                        from = from,
-                        col = column
-                    ),
-                    vec![Param::Real(*interval)],
-                )]
-            } else {
-                vec![stmt(
-                    format!(
-                        "SELECT {b} AS b, COUNT(*) FROM (SELECT {col} / ? AS q {from} WHERE {col} IS NOT NULL) GROUP BY b",
-                        b = floor("q"),
-                        col = column,
-                        from = from
-                    ),
-                    vec![Param::Real(*interval)],
-                )]
-            }
+            vec![stmt(
+                format!(
+                    "SELECT {b} AS b, COUNT(DISTINCT id) FROM (SELECT d.{id} AS id, {v} / ? AS q {vf} WHERE {v} IS NOT NULL) GROUP BY b",
+                    b = floor("q"),
+                    id = id,
+                    v = value,
+                    vf = values_from
+                ),
+                vec![Param::Real(*interval)],
+            )]
         }
         AggKind::DateHistogram {
             calendar_interval, ..
         } => vec![stmt(
             format!(
-                "SELECT b, COUNT(*) FROM (SELECT {b} AS b {from} WHERE {col} IS NOT NULL) GROUP BY b",
-                b = date_bucket(&column, *calendar_interval),
-                from = from,
-                col = column
+                "SELECT b, COUNT(DISTINCT id) FROM (SELECT d.{id} AS id, {b} AS b {vf} WHERE {v} IS NOT NULL) GROUP BY b",
+                id = id,
+                b = date_bucket(&value, *calendar_interval),
+                vf = values_from,
+                v = value
             ),
             vec![],
         )],
         AggKind::ValueCount { .. } => {
-            if f.array {
+            if f.array && f.ty == FieldType::Keyword {
+                // Elasticsearch counts a keyword array's values through sorted-set doc values,
+                // so a value repeated in one record counts once.
                 vec![stmt(
                     format!(
-                        "SELECT CAST(TOTAL(json_array_length({col})) AS INTEGER) {from}",
-                        col = column,
-                        from = from
+                        "SELECT COUNT(*) FROM (SELECT DISTINCT d.{id}, j.value {vf})",
+                        id = id,
+                        vf = values_from
                     ),
                     vec![],
                 )]
             } else {
-                vec![stmt(format!("SELECT COUNT({}) {}", column, from), vec![])]
+                vec![stmt(format!("SELECT COUNT({}) {}", value, values_from), vec![])]
             }
         }
-        AggKind::Cardinality { .. } => {
-            if f.array {
-                vec![stmt(
-                    format!(
-                        "SELECT COUNT(DISTINCT j.value) {from}, json_each({col}) j",
-                        from = from,
-                        col = column
-                    ),
-                    vec![],
-                )]
-            } else {
-                vec![stmt(
-                    format!("SELECT COUNT(DISTINCT {}) {}", column, from),
-                    vec![],
-                )]
-            }
-        }
+        AggKind::Cardinality { .. } => vec![stmt(
+            format!("SELECT COUNT(DISTINCT {}) {}", value, values_from),
+            vec![],
+        )],
         AggKind::Avg { .. }
         | AggKind::Min { .. }
         | AggKind::Max { .. }
         | AggKind::Sum { .. }
-        | AggKind::Stats { .. } => {
-            let (v, tail) = if f.array {
-                ("j.value".to_string(), format!("{}, json_each({}) j", from, column))
-            } else {
-                (column.clone(), from.clone())
-            };
-            vec![stmt(
-                format!(
-                    "SELECT COUNT({v}), CAST(MIN({v}) AS REAL), CAST(MAX({v}) AS REAL), TOTAL({v}) {tail}",
-                    v = v,
-                    tail = tail
-                ),
-                vec![],
-            )]
-        }
+        | AggKind::Stats { .. } => vec![stmt(
+            format!(
+                "SELECT COUNT({v}), CAST(MIN({v}) AS REAL), CAST(MAX({v}) AS REAL), TOTAL({v}) {vf}",
+                v = value,
+                vf = values_from
+            ),
+            vec![],
+        )],
     };
-    CompiledAgg {
+    Ok(CompiledAgg {
         name: a.name.clone(),
         kind: a.kind.clone(),
         statements,
-    }
+    })
 }
 
 /// Compiles a request. The caller runs `materialize`, then `total`, `hits` and the
 /// aggregations, then `cleanup`, all inside one transaction.
-pub fn compile(req: &Request, m: &Mapping) -> Compiled {
+pub fn compile(req: &Request, m: &Mapping) -> Result<Compiled> {
     let mut params = Vec::new();
-    let where_ = predicate(&req.query, m, &mut params);
+    let where_ = predicate(&req.query, m, &mut params)?;
     let materialize = Statement {
         sql: format!(
             "CREATE TEMP TABLE {} AS SELECT d.{} FROM {} d WHERE {}",
@@ -666,7 +742,7 @@ pub fn compile(req: &Request, m: &Mapping) -> Compiled {
     let (pf_sql, pf_params) = match &req.post_filter {
         Some(pf) => {
             let mut p = Vec::new();
-            let s = predicate(pf, m, &mut p);
+            let s = predicate(pf, m, &mut p)?;
             (format!(" WHERE {}", s), p)
         }
         None => (String::new(), Vec::new()),
@@ -680,7 +756,7 @@ pub fn compile(req: &Request, m: &Mapping) -> Compiled {
     } else {
         let mut order: Vec<String> = Vec::new();
         for s in &req.sort {
-            let f = &m.fields[&s.field];
+            let f = field(m, &s.field)?;
             let c = agg_col(&s.field, f);
             let dir = match s.order {
                 Order::Asc => "ASC",
@@ -691,11 +767,13 @@ pub fn compile(req: &Request, m: &Mapping) -> Compiled {
         }
         order.push(format!("{} ASC", col("_id")));
         let mut params = pf_params;
-        params.push(Param::Int(req.size as i64));
-        params.push(Param::Int(req.from as i64));
+        params.push(Param::Int(req.size.min(MAX_SIZE) as i64));
+        params.push(Param::Int(req.from.min(MAX_SIZE) as i64));
         Some(Statement {
             sql: format!(
-                "SELECT d.* {}{} ORDER BY {} LIMIT ? OFFSET ?",
+                "SELECT d.{}, d.{} {}{} ORDER BY {} LIMIT ? OFFSET ?",
+                ident("_id"),
+                ident(SOURCE),
                 from_matched(),
                 pf_sql,
                 order.join(", ")
@@ -703,14 +781,21 @@ pub fn compile(req: &Request, m: &Mapping) -> Compiled {
             params,
         })
     };
-    Compiled {
+    let mut aggs = Vec::new();
+    for a in &req.aggs {
+        aggs.push(compile_agg(a, m)?);
+    }
+    Ok(Compiled {
         materialize,
         cleanup: format!("DROP TABLE {}", MATCHED),
         total,
         hits,
-        aggs: req.aggs.iter().map(|a| compile_agg(a, m)).collect(),
-    }
+        aggs,
+    })
 }
+
+/// Milliseconds in a day, re-exported for callers that round date terms.
+pub const DAY_MS: i64 = MS_PER_DAY;
 
 #[cfg(test)]
 mod tests {
@@ -721,7 +806,9 @@ mod tests {
     fn mapping() -> Mapping {
         Mapping::from_json(&json!({"properties": {
             "state": {"type": "keyword"}, "labels": {"type": "keyword", "array": true},
-            "title": {"type": "text"}, "comments": {"type": "long"}, "created_at": {"type": "date"}
+            "title": {"type": "text"}, "notes": {"type": "text", "array": true},
+            "comments": {"type": "long"}, "created_at": {"type": "date"},
+            "reprinted_at": {"type": "date", "array": true}
         }}))
         .unwrap()
     }
@@ -734,7 +821,7 @@ mod tests {
             &m,
         )
         .unwrap();
-        let c = compile(&req, &m);
+        let c = compile(&req, &m).unwrap();
         let sql = &c.materialize.sql;
         assert!(
             sql.contains("NOT (COALESCE((d.\"state__cf\" = ?), 0))"),
@@ -765,7 +852,7 @@ mod tests {
             &m,
         )
         .unwrap();
-        let c = compile(&req, &m);
+        let c = compile(&req, &m).unwrap();
         assert_eq!(
             c.materialize.params,
             vec![Param::Text("\"title\" : (\"facet\" \"counts\")".into())]
@@ -776,17 +863,87 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            compile(&req, &m).materialize.params,
+            compile(&req, &m).unwrap().materialize.params,
             vec![Param::Text("\"title\" : \"chat completions\"".into())]
         );
     }
 
     #[test]
-    fn schema_has_shadows_and_fts() {
-        let s = schema(&mapping());
-        assert!(s[0].contains("\"state__cf\" TEXT") && s[0].contains("\"created_at__ts\" INTEGER"));
+    fn schema_has_shadows_source_and_fts_rows_per_value() {
+        let m = mapping();
+        let s = schema(&m);
+        assert!(s[0].contains("\"_source\" TEXT") && s[0].contains("\"state__cf\" TEXT"));
+        assert!(
+            s[0].contains("\"created_at__ts\" INTEGER")
+                && s[0].contains("\"reprinted_at__ts\" TEXT")
+        );
         assert!(s
             .iter()
-            .any(|x| x.contains("fts5") && x.contains("unicode61")));
+            .any(|x| x.contains("fts5") && x.contains("remove_diacritics 0")));
+        let fill = fts_fill(&m);
+        assert!(
+            fill.iter().any(|x| x.contains("json_each(\"notes\")")),
+            "{:?}",
+            fill
+        );
+    }
+
+    #[test]
+    fn date_arrays_get_a_timestamp_array() {
+        let m = mapping();
+        let doc = json!({"_id": "1", "reprinted_at": ["2026-01-01", "not a date", null], "notes": ["a", "b"]});
+        let row = row_params(&doc, &m, 0).unwrap();
+        let cols = columns(&m);
+        let at = |name: &str| cols.iter().position(|(n, _)| n == name).unwrap();
+        assert_eq!(
+            row[at("reprinted_at")],
+            Param::Text("[\"2026-01-01\"]".into())
+        );
+        assert_eq!(
+            row[at("reprinted_at__ts")],
+            Param::Text(format!("[{}]", parse_iso("2026-01-01").unwrap()))
+        );
+        assert_eq!(
+            row[at("_source")],
+            Param::Text(
+                json!({"reprinted_at": ["2026-01-01", "not a date", null], "notes": ["a", "b"]})
+                    .to_string()
+            )
+        );
+        let req = parse_request(&json!({"query": {"range": {"reprinted_at": {"gte": "2025-01-01"}}}, "aggs": {"d": {"date_histogram": {"field": "reprinted_at", "calendar_interval": "year"}}}}), &m).unwrap();
+        let c = compile(&req, &m).unwrap();
+        assert!(
+            c.materialize
+                .sql
+                .contains("json_each(d.\"reprinted_at__ts\")"),
+            "{}",
+            c.materialize.sql
+        );
+        assert!(
+            c.aggs[0].statements[0]
+                .sql
+                .contains("json_each(d.\"reprinted_at__ts\")"),
+            "{}",
+            c.aggs[0].statements[0].sql
+        );
+    }
+
+    #[test]
+    fn a_date_term_without_time_means_the_day() {
+        let m = mapping();
+        let req = parse_request(
+            &json!({"query": {"term": {"created_at": "2026-10-08"}}}),
+            &m,
+        )
+        .unwrap();
+        let c = compile(&req, &m).unwrap();
+        assert!(
+            c.materialize
+                .sql
+                .contains(">= ? AND d.\"created_at__ts\" <= ?"),
+            "{}",
+            c.materialize.sql
+        );
+        assert_eq!(c.materialize.params.len(), 2);
     }
 }

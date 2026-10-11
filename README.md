@@ -39,8 +39,12 @@ Deliberate differences from Elasticsearch, each held by a test:
 - Counts are exact, never approximate. `terms` has no `shard_size`.
 - `should` is supported only directly in a `bool`; `minimum_should_match` beyond 0 and 1 is refused.
 - With no `sort`, hits come back in `_id` order.
-- Text is tokenized the way FTS5's `unicode61` does: lower-cased alphanumeric runs. Elasticsearch's
-  standard analyzer keeps `doesn't` and `v1.41.0` whole; here they split.
+- Text is tokenized exactly as FTS5's `unicode61` does (measured against SQLite, not assumed:
+  `dev/tokenizer_parity.py`): split at spaces, punctuation and symbols, lower-cased with Unicode
+  simple case folding, diacritics kept. Elasticsearch's standard analyzer keeps `doesn't` and
+  `v1.41.0` whole; here they split. There is no stemming.
+- A value that does not fit its field's type is empty: `exists` is false for it and it matches
+  nothing. Elasticsearch would have refused the record at indexing time.
 
 Checked against a real Elasticsearch 9.5.5 (`dev/es_parity.py`, single shard, same 336 records):
 every fixture matches, including date-only range bounds rounding up for `gt` and `lte`, range
@@ -92,8 +96,10 @@ A request runs as one read transaction on one `docs` table. The matching ids are
 once into a temp table; the total, the page of hits and every aggregation are computed from
 that set, so the filter runs once and hits and aggregations can never disagree. Keywords have
 a case-folded shadow column, dates an epoch-millisecond one, arrays are JSON queried through
-`json_each`, text goes through an FTS5 table with the `unicode61` tokenizer. Every value is a
-bound parameter; identifiers come only from the validated mapping. The compiler itself does no
+`json_each`, text goes through an FTS5 table with the `unicode61` tokenizer, one row per value.
+The record itself is kept as `_source` and returned as it was. Every value is a bound parameter;
+identifiers come only from the validated mapping. A histogram that would span more than 65,536
+buckets and a page past Elasticsearch's result window of 10,000 are refused, as there. The compiler itself does no
 I/O: with `--no-default-features` the crate has no SQLite dependency and is ready for
 WebAssembly.
 

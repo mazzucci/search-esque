@@ -4,6 +4,8 @@
 //! the reference evaluator and the SQLite store. And the two engines are held to each other on
 //! the whole response.
 
+#![cfg(feature = "sqlite")]
+
 use search_esque::dsl::parse_request;
 use search_esque::eval::evaluate;
 use search_esque::store::Store;
@@ -67,6 +69,12 @@ fn check(engine: &str, name: &str, res: &Value, expect: &Value, failures: &mut V
                 "{}: _source keys {:?} expected {:?}",
                 tag, got, want
             ));
+        }
+    }
+    if let Some(n) = expect.get("hit_count") {
+        let got = res["hits"]["hits"].as_array().unwrap().len();
+        if n.as_u64() != Some(got as u64) {
+            failures.push(format!("{}: {} hits on the page, expected {}", tag, got, n));
         }
     }
 }

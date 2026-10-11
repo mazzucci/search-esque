@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 25715217fa2eb6dbccc55872c7fe2ba9aa23b66321fc4889dac89c64179361e3 # shrinks to req = Request { query: Bool { must: [], should: [Prefix { field: "body", value: "j" }], must_not: [], filter: [], minimum_should_match: None }, post_filter: None, aggs: [], sort: [], size: 0, from: 0, source: All(true) }
