@@ -39,7 +39,8 @@
   official SQLite WebAssembly build, through the crate's own executor. The executor moved out
   of the store into `exec`, behind a driver trait, so rusqlite and the browser run the same
   code; the `wasm` feature exposes `parse`, `compile`, `mapping`, `schema`, `tokens` and
-  `search` to JavaScript.
+  `search` to JavaScript. The README shows a recording of it (`media/playground.gif`), made by
+  `dev/record_demo.mjs` and `dev/make_gif.py` from the real page.
 - From the playground's review: parameters cross the JavaScript boundary typed, and the page
   binds reals with `sqlite3_bind_double`, since a JSON `10.0` becomes `10` and SQLite would
   bind it as an integer (integer division in histograms, wrap-around for huge bounds); the

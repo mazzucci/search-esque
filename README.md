@@ -25,6 +25,10 @@ store** executes them on a 400-record demo catalogue with SQLite compiled to Web
 the tab, through the crate's own executor; nothing leaves the browser. Translation never needs
 the database: you decide where, and whether, to run the SQL.
 
+![The playground: an Elasticsearch request on the left compiles to SQLite statements with bound parameters on the right; Run on demo store answers with the total, the hits and a genres bucket table; editing a value in the request changes the bound parameter as it is typed, and running again changes the counts; an aggregation-only request answers with buckets per format and per year, drawn as bars; a request with a wildcard clause is refused at query.bool.filter[1].wildcard, with the list of what is supported](media/playground.gif)
+
+<sub>Everything in the recording is the real page, the compiler and SQLite running in the browser; only the hands are scripted (`dev/record_demo.mjs`, assembled by `dev/make_gif.py`).</sub>
+
 To build it yourself: `rustup target add wasm32-unknown-unknown`, install
 [wasm-pack](https://rustwasm.github.io/wasm-pack/), then
 
@@ -164,6 +168,7 @@ src/exec.rs       running a compiled request on any SQLite, through a small driv
 src/store.rs      the rusqlite driver and the store file (feature `sqlite`, on by default)
 src/wasm.rs       the same functions for a page, SQLite driven from JavaScript (feature `wasm`)
 web/              the playground page; `pkg/`, `vendor/` and `demo/` are built, not committed
+media/            the README's recording of the playground (`dev/record_demo.mjs`, `dev/make_gif.py`)
 src/shape.rs      Elasticsearch's response shape, shared by both engines
 src/timeutil.rs   ISO dates and calendar buckets without a dependency
 src/bin/esque.rs  the command line
