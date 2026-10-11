@@ -87,8 +87,6 @@ const WORDS: &[&str] = &[
     "reopened",
     "bug",
     "enhancement",
-    "Kerollmops",
-    "dureuill",
     "User",
     "Bot",
     "MEMBER",

@@ -104,8 +104,8 @@ WebAssembly.
 
 ## How it is tested
 
-- `fixtures/github-issues`: 336 real GitHub issues and pull requests (meilisearch/meilisearch,
-  fetched 2026-10-10) with an Elasticsearch-style mapping, and 46 request fixtures whose
+- `fixtures/github-issues`: 336 real GitHub issues and pull requests from one public open-source
+  project's repository (fetched 2026-10-10) with an Elasticsearch-style mapping, and 46 request fixtures whose
   expectations were computed by an independent Python oracle (`dev/python_oracle.py`).
 - Both engines, the evaluator and the SQLite store, answer every fixture, and are compared to
   each other on the whole response: total, hits in order with `_source`, aggregations.
