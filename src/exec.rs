@@ -231,3 +231,115 @@ fn aggregate(exec: &mut dyn Executor, a: &sql::CompiledAgg, m: &Mapping) -> Resu
         }
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dsl::parse_request;
+    use serde_json::json;
+    use std::collections::VecDeque;
+
+    /// A driver that records what it was asked to run and answers queries from a script.
+    struct Fake {
+        ran: Vec<String>,
+        answers: VecDeque<Result<Vec<Vec<SqlValue>>>>,
+    }
+
+    impl Executor for Fake {
+        fn query(&mut self, st: &Statement) -> Result<Vec<Vec<SqlValue>>> {
+            self.ran.push(st.sql.clone());
+            self.answers
+                .pop_front()
+                .unwrap_or_else(|| Err(Error::new("sqlite", "unexpected query")))
+        }
+
+        fn execute(&mut self, st: &Statement) -> Result<()> {
+            self.ran.push(st.sql.clone());
+            Ok(())
+        }
+    }
+
+    fn mapping() -> Mapping {
+        Mapping::from_json(&json!({"properties": {"state": {"type": "keyword"}, "n": {"type": "long"}, "ok": {"type": "boolean"}}})).unwrap()
+    }
+
+    #[test]
+    fn shapes_rows_from_any_driver() {
+        let m = mapping();
+        let req = parse_request(
+            &json!({"query": {"term": {"state": "open"}}, "size": 2, "aggs": {"s": {"terms": {"field": "state"}}, "b": {"terms": {"field": "ok"}}, "c": {"stats": {"field": "n"}}, "v": {"value_count": {"field": "n"}}}}),
+            &m,
+        )
+        .unwrap();
+        let mut fake = Fake {
+            ran: vec![],
+            answers: VecDeque::from(vec![
+                Ok(vec![vec![SqlValue::Int(5)]]),
+                Ok(vec![
+                    vec![
+                        SqlValue::Text("1".into()),
+                        SqlValue::Text(r#"{"state":"open","n":1}"#.into()),
+                    ],
+                    vec![
+                        SqlValue::Text("2".into()),
+                        SqlValue::Text(r#"{"state":"open","n":9}"#.into()),
+                    ],
+                ]),
+                Ok(vec![vec![SqlValue::Text("open".into()), SqlValue::Int(5)]]),
+                Ok(vec![
+                    vec![SqlValue::Int(1), SqlValue::Int(3)],
+                    vec![SqlValue::Int(0), SqlValue::Int(2)],
+                ]),
+                Ok(vec![vec![
+                    SqlValue::Int(5),
+                    SqlValue::Real(1.0),
+                    SqlValue::Real(9.0),
+                    SqlValue::Real(20.0),
+                ]]),
+                Ok(vec![vec![SqlValue::Int(5)]]),
+            ]),
+        };
+        let res = search(&mut fake, &req, &m).unwrap();
+        assert_eq!(res["hits"]["total"]["value"], json!(5));
+        assert_eq!(res["hits"]["hits"][1]["_source"]["n"], json!(9));
+        assert_eq!(
+            res["aggregations"]["s"]["buckets"],
+            json!([{"key": "open", "doc_count": 5}])
+        );
+        assert_eq!(
+            res["aggregations"]["b"]["buckets"][0],
+            json!({"key": 1, "key_as_string": "true", "doc_count": 3})
+        );
+        assert_eq!(res["aggregations"]["c"]["avg"], json!(4.0));
+        assert_eq!(res["aggregations"]["v"]["value"], json!(5));
+        assert_eq!(fake.ran.first().map(String::as_str), Some("BEGIN"));
+        assert!(fake.ran.iter().any(|s| s.starts_with("CREATE TEMP TABLE")));
+        assert_eq!(fake.ran.last().map(String::as_str), Some("COMMIT"));
+        assert!(fake.ran[fake.ran.len() - 2].starts_with("DROP TABLE"));
+    }
+
+    #[test]
+    fn a_failing_statement_still_cleans_up_and_ends_the_transaction() {
+        let m = mapping();
+        let req = parse_request(&json!({"query": {"match_all": {}}, "size": 0}), &m).unwrap();
+        let mut fake = Fake {
+            ran: vec![],
+            answers: VecDeque::from(vec![Err(Error::new("sqlite", "disk I/O error"))]),
+        };
+        let err = search(&mut fake, &req, &m).unwrap_err();
+        assert_eq!(err.message, "disk I/O error");
+        assert!(fake.ran.iter().any(|s| s.starts_with("DROP TABLE")));
+        assert_eq!(fake.ran.last().map(String::as_str), Some("COMMIT"));
+    }
+
+    #[test]
+    fn rows_from_javascript_keep_their_types() {
+        assert_eq!(SqlValue::from_json(&json!(10)), SqlValue::Int(10));
+        assert_eq!(SqlValue::from_json(&json!(10.0)), SqlValue::Real(10.0));
+        assert_eq!(SqlValue::from_json(&json!(true)), SqlValue::Int(1));
+        assert_eq!(SqlValue::from_json(&json!(null)), SqlValue::Null);
+        assert_eq!(SqlValue::from_json(&json!("x")), SqlValue::Text("x".into()));
+        assert_eq!(SqlValue::Real(2.5).as_i64(), Some(2));
+        assert_eq!(SqlValue::Text("3".into()).as_i64(), None);
+    }
+}
