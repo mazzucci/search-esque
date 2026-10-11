@@ -1,16 +1,14 @@
-//! The SQLite executor: a store built from a mapping and records, and `search`, which runs
-//! what `sql::compile` produces and shapes the answer. The one module that does I/O; behind the
-//! `sqlite` feature so the core still compiles to WebAssembly without it.
+//! The SQLite store: a file (or memory) built from a mapping and records, searched through
+//! `exec::search` with rusqlite as the driver. The one module that does I/O; behind the `sqlite`
+//! feature so the core still compiles to WebAssembly without it.
 
-use crate::ast::*;
 use crate::error::{Error, Result};
-use crate::mapping::{FieldType, Mapping};
-use crate::shape::{self, Key, Metrics};
-use crate::sql::{self, Compiled, Param, Statement};
+use crate::exec::{self, Executor, SqlValue};
+use crate::mapping::Mapping;
+use crate::sql::{self, Param, Statement};
 use rusqlite::types::{ToSqlOutput, ValueRef};
 use rusqlite::{params_from_iter, Connection, ToSql};
-use serde_json::{Map, Value};
-use std::collections::BTreeMap;
+use serde_json::Value;
 use std::path::Path;
 
 impl ToSql for Param {
@@ -30,6 +28,45 @@ fn db_err(e: rusqlite::Error) -> Error {
 
 /// The store format; bumped when the schema changes, so `open` can tell a stale file.
 pub const FORMAT: &str = "search-esque-store-1";
+
+/// rusqlite as an `Executor`.
+struct Conn<'a>(&'a Connection);
+
+impl Executor for Conn<'_> {
+    fn query(&mut self, st: &Statement) -> Result<Vec<Vec<SqlValue>>> {
+        let mut prepared = self.0.prepare(&st.sql).map_err(db_err)?;
+        let n = prepared.column_count();
+        let rows = prepared
+            .query_map(params_from_iter(st.params.iter()), |r| {
+                (0..n)
+                    .map(|i| {
+                        Ok(match r.get_ref(i)? {
+                            ValueRef::Null => SqlValue::Null,
+                            ValueRef::Integer(i) => SqlValue::Int(i),
+                            ValueRef::Real(x) => SqlValue::Real(x),
+                            ValueRef::Text(t) => {
+                                SqlValue::Text(String::from_utf8_lossy(t).into_owned())
+                            }
+                            ValueRef::Blob(_) => SqlValue::Null,
+                        })
+                    })
+                    .collect::<rusqlite::Result<Vec<_>>>()
+            })
+            .map_err(db_err)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(db_err)
+    }
+
+    fn execute(&mut self, st: &Statement) -> Result<()> {
+        if st.params.is_empty() {
+            self.0.execute_batch(&st.sql).map_err(db_err)
+        } else {
+            self.0
+                .execute(&st.sql, params_from_iter(st.params.iter()))
+                .map(|_| ())
+                .map_err(db_err)
+        }
+    }
+}
 
 /// The distinct tokens the bundled SQLite's FTS5 makes of a text with the store's tokenizer
 /// options, sorted. `dev/tokenizer_parity.py` holds `tokenize::tokens` to this.
@@ -190,169 +227,7 @@ impl Store {
 
     /// Runs a request and answers in Elasticsearch's response shape, the same shape the
     /// evaluator produces.
-    pub fn search(&self, req: &Request) -> Result<Value> {
-        let compiled = sql::compile(req, &self.mapping)?;
-        let tx = self.conn.unchecked_transaction().map_err(db_err)?;
-        let result = self.run(&tx, req, &compiled);
-        let _ = tx.execute_batch(&compiled.cleanup);
-        match (result, tx.commit()) {
-            (Err(e), _) => Err(e),
-            (Ok(_), Err(e)) => Err(db_err(e)),
-            (Ok(v), Ok(())) => Ok(v),
-        }
-    }
-
-    fn run(&self, tx: &rusqlite::Transaction, req: &Request, c: &Compiled) -> Result<Value> {
-        tx.execute(
-            &c.materialize.sql,
-            params_from_iter(c.materialize.params.iter()),
-        )
-        .map_err(db_err)?;
-        let total: i64 = tx
-            .query_row(&c.total.sql, params_from_iter(c.total.params.iter()), |r| {
-                r.get(0)
-            })
-            .map_err(db_err)?;
-        let mut hits = Vec::new();
-        if let Some(h) = &c.hits {
-            let mut st = tx.prepare(&h.sql).map_err(db_err)?;
-            let mut rows = st
-                .query(params_from_iter(h.params.iter()))
-                .map_err(db_err)?;
-            while let Some(row) = rows.next().map_err(db_err)? {
-                let id: String = row.get(0).map_err(db_err)?;
-                let text: String = row.get(1).map_err(db_err)?;
-                let source: Value = serde_json::from_str(&text).map_err(|e| {
-                    Error::new(
-                        "sqlite",
-                        format!("record {} has an unreadable _source: {}", id, e),
-                    )
-                })?;
-                hits.push(shape::hit(&id, shape::filter_source(source, &req.source)));
-            }
-        }
-        let aggregations = if req.aggs.is_empty() {
-            None
-        } else {
-            let mut out = Map::new();
-            for a in &c.aggs {
-                let value = self
-                    .aggregate(tx, a)
-                    .map_err(|e| e.at(format!("aggs.{}", a.name)))?;
-                out.insert(a.name.clone(), value);
-            }
-            Some(out)
-        };
-        Ok(shape::response(total as usize, hits, aggregations))
-    }
-
-    fn key_of(v: ValueRef, ty: FieldType) -> Option<Key> {
-        Some(match (ty, v) {
-            (_, ValueRef::Null) => return None,
-            (FieldType::Boolean, ValueRef::Integer(i)) => Key::Bool(i != 0),
-            (_, ValueRef::Integer(i)) => Key::Num(i as f64),
-            (_, ValueRef::Real(x)) => Key::Num(x),
-            (_, ValueRef::Text(t)) => Key::Str(String::from_utf8_lossy(t).into_owned()),
-            (_, ValueRef::Blob(_)) => return None,
-        })
-    }
-
-    fn aggregate(&self, tx: &rusqlite::Transaction, a: &sql::CompiledAgg) -> Result<Value> {
-        let ty = self.mapping.fields[a.kind.field()].ty;
-        let first = a.statements.first().ok_or_else(|| {
-            Error::new(
-                "sqlite",
-                format!("aggregation '{}' compiled to nothing", a.name),
-            )
-        })?;
-        Ok(match &a.kind {
-            AggKind::Terms { size, order, .. } => {
-                let mut counts: Vec<(Key, u64)> = Vec::new();
-                let mut st = tx.prepare(&first.sql).map_err(db_err)?;
-                let mut rows = st.query([]).map_err(db_err)?;
-                while let Some(row) = rows.next().map_err(db_err)? {
-                    if let Some(k) = Store::key_of(row.get_ref(0).map_err(db_err)?, ty) {
-                        let n: i64 = row.get(1).map_err(db_err)?;
-                        counts.push((k, n as u64));
-                    }
-                }
-                shape::terms(counts, *size, *order, ty)
-            }
-            AggKind::Range { ranges, .. } => {
-                let ordered = shape::ordered_ranges(ranges);
-                let mut buckets = Vec::new();
-                for (r, st) in ordered.iter().zip(&a.statements) {
-                    let n: i64 = Store::scalar(tx, st)?;
-                    buckets.push((*r, n as u64));
-                }
-                shape::range(&buckets)
-            }
-            AggKind::Histogram {
-                interval,
-                min_doc_count,
-                ..
-            } => {
-                let bounds: (Option<f64>, Option<f64>) = tx
-                    .query_row(&first.sql, params_from_iter(first.params.iter()), |r| {
-                        Ok((r.get(0)?, r.get(1)?))
-                    })
-                    .map_err(db_err)?;
-                if let (Some(lo), Some(hi)) = bounds {
-                    shape::histogram_bounds(lo, hi, *interval)?;
-                }
-                let counts = Store::bucket_counts(tx, &a.statements[1])?;
-                shape::histogram(&counts, *interval, *min_doc_count)?
-            }
-            AggKind::DateHistogram {
-                calendar_interval,
-                min_doc_count,
-                ..
-            } => {
-                let counts = Store::bucket_counts(tx, first)?;
-                shape::date_histogram(&counts, *calendar_interval, *min_doc_count)?
-            }
-            AggKind::ValueCount { .. } | AggKind::Cardinality { .. } => {
-                let n: i64 = Store::scalar(tx, first)?;
-                shape::single_value(n as usize)
-            }
-            kind => {
-                let m = tx
-                    .query_row(&first.sql, params_from_iter(first.params.iter()), |r| {
-                        let count: i64 = r.get(0)?;
-                        let min: Option<f64> = r.get(1)?;
-                        let max: Option<f64> = r.get(2)?;
-                        let sum: f64 = r.get(3)?;
-                        Ok(Metrics {
-                            count: count as usize,
-                            min,
-                            max,
-                            sum,
-                        })
-                    })
-                    .map_err(db_err)?;
-                shape::metric(kind, m)
-            }
-        })
-    }
-
-    fn scalar(tx: &rusqlite::Transaction, st: &Statement) -> Result<i64> {
-        tx.query_row(&st.sql, params_from_iter(st.params.iter()), |r| r.get(0))
-            .map_err(db_err)
-    }
-
-    fn bucket_counts(tx: &rusqlite::Transaction, st: &Statement) -> Result<BTreeMap<i64, u64>> {
-        let mut counts = BTreeMap::new();
-        let mut prepared = tx.prepare(&st.sql).map_err(db_err)?;
-        let mut rows = prepared
-            .query(params_from_iter(st.params.iter()))
-            .map_err(db_err)?;
-        while let Some(row) = rows.next().map_err(db_err)? {
-            let b: Option<i64> = row.get(0).map_err(db_err)?;
-            if let Some(b) = b {
-                let n: i64 = row.get(1).map_err(db_err)?;
-                counts.insert(b, n as u64);
-            }
-        }
-        Ok(counts)
+    pub fn search(&self, req: &crate::ast::Request) -> Result<Value> {
+        exec::search(&mut Conn(&self.conn), req, &self.mapping)
     }
 }

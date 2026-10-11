@@ -1,0 +1,52 @@
+name: Playground
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: Install wasm-pack
+        run: curl -sSf https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
+      - name: Build the WebAssembly package
+        run: wasm-pack build --release --target web --out-dir web/pkg -- --no-default-features --features wasm
+      - name: Vendor the SQLite WebAssembly build
+        run: sh dev/vendor_sqlite.sh
+      - name: Build the demo store
+        run: |
+          cargo build --release
+          mkdir -p web/demo
+          target/release/esque load --mapping fixtures/library/mapping.json --docs fixtures/library/docs.json --db web/demo/library.db
+          cp fixtures/library/mapping.json web/demo/mapping.json
+          rm -f web/pkg/.gitignore
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

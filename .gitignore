@@ -3,3 +3,6 @@
 *.db
 proptest-regressions/
 .DS_Store
+web/pkg/
+web/demo/
+web/vendor/

@@ -16,7 +16,7 @@
 - `esque parse`, `esque compile`, `esque eval`, `esque load`, `esque search` and `esque mapping`.
 - Fixtures: a generated 400-record library catalogue designed around the edge cases (case
   variants, awkward keyword characters, empty and duplicate arrays, a date array, a text array,
-  whole-number floats, negatives, nulls, dates before 1970, decomposed accents), and 78 requests
+  whole-number floats, negatives, nulls, dates before 1970, decomposed accents), and 80 requests
   with their answers.
 - Parity with a real Elasticsearch 9.5.5 for both engines: every fixture matches; three
   semantics adopted from it (date-only bounds round up for `gt` and `lte`, range buckets
@@ -34,6 +34,12 @@
   engines; a value of the wrong type is empty on both engines; a `term` on a date without a
   time part means the whole day, as in Elasticsearch.
 - `esque tokens` and `esque fts-tokens`, to see how a text splits on each side.
+- The playground (`web/`, published with GitHub Pages): the request on the left, the compiled
+  statements on the right, and a Run button that executes them on a demo store with the
+  official SQLite WebAssembly build, through the crate's own executor. The executor moved out
+  of the store into `exec`, behind a driver trait, so rusqlite and the browser run the same
+  code; the `wasm` feature exposes `parse`, `compile`, `mapping`, `schema`, `tokens` and
+  `search` to JavaScript.
 - From the second review: the case fold is measured from the bundled SQLite for every code
   point (nothing comes from the toolchain's Unicode tables any more); `terms` on a date without
   a time part means the whole day, like `term`; a histogram whose bucket indexes would overflow
