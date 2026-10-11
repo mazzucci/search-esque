@@ -1,0 +1,18 @@
+{
+ "name": "source_false",
+ "request": {
+  "query": {
+   "match_all": {}
+  },
+  "size": 2,
+  "_source": false
+ },
+ "expect": {
+  "total": 400,
+  "hit_ids": [
+   "b0001",
+   "b0002"
+  ],
+  "source_keys": []
+ }
+}

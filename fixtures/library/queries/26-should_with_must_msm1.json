@@ -1,0 +1,26 @@
+{
+ "name": "should_with_must_msm1",
+ "request": {
+  "size": 0,
+  "query": {
+   "bool": {
+    "must": {
+     "term": {
+      "format": "paperback"
+     }
+    },
+    "should": [
+     {
+      "term": {
+       "language": "fr"
+      }
+     }
+    ],
+    "minimum_should_match": 1
+   }
+  }
+ },
+ "expect": {
+  "total": 20
+ }
+}

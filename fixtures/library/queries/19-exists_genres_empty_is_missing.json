@@ -1,0 +1,14 @@
+{
+ "name": "exists_genres_empty_is_missing",
+ "request": {
+  "size": 0,
+  "query": {
+   "exists": {
+    "field": "genres"
+   }
+  }
+ },
+ "expect": {
+  "total": 326
+ }
+}

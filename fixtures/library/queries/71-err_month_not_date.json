@@ -1,0 +1,22 @@
+{
+ "name": "err_month_not_date",
+ "request": {
+  "aggs": {
+   "x": {
+    "terms": {
+     "field": "format"
+    }
+   }
+  },
+  "query": {
+   "range": {
+    "added_at": {
+     "gte": "2026-07"
+    }
+   }
+  }
+ },
+ "expect": {
+  "error_path": "query.range.added_at.gte"
+ }
+}

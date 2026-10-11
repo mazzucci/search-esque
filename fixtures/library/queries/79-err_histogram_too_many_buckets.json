@@ -1,0 +1,17 @@
+{
+ "name": "err_histogram_too_many_buckets",
+ "request": {
+  "size": 0,
+  "aggs": {
+   "h": {
+    "histogram": {
+     "field": "balance",
+     "interval": 1e-06
+    }
+   }
+  }
+ },
+ "expect": {
+  "error_path": "aggs.h"
+ }
+}

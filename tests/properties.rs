@@ -6,115 +6,145 @@
 //! - a terms aggregation's counts add up to the records that have the field;
 //! - a page holds min(size, total - from) hits with distinct ids.
 
-#![cfg(feature = "sqlite")]
-
 use proptest::prelude::*;
 use search_esque::ast::*;
 use search_esque::dsl::{parse_request, to_elasticsearch};
 use search_esque::eval::evaluate;
-use search_esque::store::Store;
 use search_esque::Mapping;
 use serde_json::{json, Value};
+
+#[allow(dead_code)]
+mod common;
 use std::path::Path;
-use std::sync::Mutex;
 use std::sync::OnceLock;
 
-const KEYWORDS: &[&str] = &[
-    "state",
-    "state_reason",
-    "author",
-    "author_type",
-    "author_association",
-    "closed_by",
+const KEYWORDS: &[&str] = &["author", "publisher", "language", "format", "isbn"];
+const KEYWORD_ARRAYS: &[&str] = &["genres", "tags"];
+const TEXTS: &[&str] = &["title", "summary", "notes"];
+const NUMBERS: &[&str] = &["pages", "price", "rating", "balance", "copies"];
+const BOOLS: &[&str] = &["available"];
+const DATES: &[&str] = &[
+    "published_at",
+    "added_at",
+    "last_borrowed_at",
+    "reprinted_at",
 ];
-const KEYWORD_ARRAYS: &[&str] = &["labels"];
-const TEXTS: &[&str] = &["title", "body"];
-const NUMBERS: &[&str] = &["comments", "reactions"];
-const BOOLS: &[&str] = &["draft"];
-const DATES: &[&str] = &["created_at", "updated_at", "closed_at", "merged_at"];
 const ALL: &[&str] = &[
-    "state",
-    "state_reason",
-    "author",
-    "author_type",
-    "author_association",
-    "closed_by",
-    "labels",
     "title",
-    "body",
-    "comments",
-    "reactions",
-    "draft",
-    "created_at",
-    "updated_at",
-    "closed_at",
-    "merged_at",
+    "summary",
+    "notes",
+    "author",
+    "publisher",
+    "language",
+    "format",
+    "genres",
+    "tags",
+    "pages",
+    "price",
+    "rating",
+    "balance",
+    "copies",
+    "available",
+    "published_at",
+    "added_at",
+    "last_borrowed_at",
+    "reprinted_at",
+    "isbn",
 ];
 const AGGREGATABLE: &[&str] = &[
-    "state",
-    "state_reason",
     "author",
-    "author_type",
-    "author_association",
-    "closed_by",
-    "labels",
-    "comments",
-    "reactions",
-    "draft",
-    "created_at",
-    "updated_at",
-    "closed_at",
-    "merged_at",
+    "publisher",
+    "language",
+    "format",
+    "genres",
+    "tags",
+    "pages",
+    "price",
+    "rating",
+    "balance",
+    "copies",
+    "available",
+    "published_at",
+    "added_at",
+    "last_borrowed_at",
+    "reprinted_at",
+    "isbn",
 ];
 const SORTABLE: &[&str] = &[
-    "state",
-    "state_reason",
     "author",
-    "author_type",
-    "author_association",
-    "closed_by",
-    "comments",
-    "reactions",
-    "draft",
-    "created_at",
-    "updated_at",
-    "closed_at",
-    "merged_at",
+    "publisher",
+    "language",
+    "format",
+    "pages",
+    "price",
+    "rating",
+    "balance",
+    "copies",
+    "available",
+    "published_at",
+    "added_at",
+    "last_borrowed_at",
+    "isbn",
 ];
 const WORDS: &[&str] = &[
-    "open",
-    "closed",
-    "completed",
-    "not_planned",
-    "reopened",
-    "bug",
-    "enhancement",
-    "User",
-    "Bot",
-    "MEMBER",
-    "NONE",
-    "facet",
-    "search",
-    "index",
-    "error",
-    "chat",
-    "completions",
-    "filter",
-    "sort",
+    "en",
+    "fr",
+    "de",
+    "ja",
+    "hardcover",
+    "paperback",
+    "ebook",
+    "audiobook",
+    "mystery",
+    "poetry",
+    "fiction",
+    "history",
+    "staff pick",
+    "signed",
+    "50%_off",
+    "back\\slash",
+    "quote\"d",
+    "Nordlys Press",
+    "nordlys press",
+    "Harbourline",
+    "Ada Quill",
+    "harbour",
+    "lanterns",
+    "winter",
+    "garden",
+    "doesn",
+    "caf\u{e9}",
+    "cafe\u{301}",
+    "5\u{b5}s",
+    "salt",
+    "bread",
+    "notes",
+    "ending",
 ];
 const DATE_LITERALS: &[&str] = &[
-    "2023-05-25T12:58:21Z",
-    "2025-01-01",
-    "2026-01-15",
-    "2026-06-01T00:00:00Z",
-    "2026-09-01",
+    "1850-01-01",
+    "1969-12-31T23:59:59Z",
+    "1970-01-01",
+    "1999-06-30",
+    "2024-06-15",
+    "2025-01-01T00:00:00Z",
+    "2026-03-15",
+    "2026-06-30",
     "2026-10-01T12:30:00Z",
 ];
+
+/// `PROPTEST_CASES` raises the number of cases; the default keeps the suite under half a minute.
+fn cases() -> u32 {
+    std::env::var("PROPTEST_CASES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(200)
+}
 
 fn corpus() -> &'static (Mapping, Vec<Value>) {
     static CORPUS: OnceLock<(Mapping, Vec<Value>)> = OnceLock::new();
     CORPUS.get_or_init(|| {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/github-issues");
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/library");
         let m: Value =
             serde_json::from_str(&std::fs::read_to_string(root.join("mapping.json")).unwrap())
                 .unwrap();
@@ -231,7 +261,7 @@ fn leaf() -> impl Strategy<Value = Query> {
         3 => (pick(TEXTS), phrase(), prop_oneof![Just(Operator::Or), Just(Operator::And)])
             .prop_map(|(field, query, operator)| Query::Match { field, query, operator }),
         1 => (pick(TEXTS), phrase()).prop_map(|(field, query)| Query::MatchPhrase { field, query }),
-        2 => (prop_oneof![pick(KEYWORDS), pick(TEXTS)], "[a-z]{1,4}").prop_map(|(field, value)| Query::Prefix { field, value }),
+        2 => (prop_oneof![pick(KEYWORDS), pick(KEYWORD_ARRAYS), pick(TEXTS)], prop_oneof![3 => "[a-zA-Z]{1,4}", 1 => "[a-z%_\\\\\"'\u{e9} ]{1,3}"]).prop_map(|(field, value)| Query::Prefix { field, value }),
     ]
 }
 
@@ -283,7 +313,7 @@ fn agg_kind() -> impl Strategy<Value = AggKind> {
     prop_oneof![
         4 => (pick(AGGREGATABLE), 1usize..25, order).prop_map(|(field, size, order)| AggKind::Terms { field, size, order }),
         2 => (pick(NUMBERS), prop::collection::vec(range_bucket(), 1..4)).prop_map(|(field, ranges)| AggKind::Range { field, ranges }),
-        2 => (pick(NUMBERS), 1i64..50, 0u64..2).prop_map(|(field, iv, m)| AggKind::Histogram { field, interval: iv as f64, min_doc_count: m }),
+        2 => (pick(NUMBERS), prop_oneof![(1i64..50).prop_map(|i| i as f64), (1i64..200).prop_map(|i| i as f64 / 8.0)], 0u64..2).prop_map(|(field, iv, m)| AggKind::Histogram { field, interval: iv, min_doc_count: m }),
         2 => (pick(DATES), calendar, 0u64..2).prop_map(|(field, ci, m)| AggKind::DateHistogram { field, calendar_interval: ci, min_doc_count: m }),
         1 => pick(NUMBERS).prop_map(|field| AggKind::Avg { field }),
         1 => pick(NUMBERS).prop_map(|field| AggKind::Min { field }),
@@ -336,7 +366,7 @@ fn request() -> impl Strategy<Value = Request> {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig { cases: 200, .. ProptestConfig::default() })]
+    #![proptest_config(ProptestConfig { cases: cases(), .. ProptestConfig::default() })]
 
     #[test]
     fn elasticsearch_round_trip(req in request()) {
@@ -411,63 +441,93 @@ proptest! {
 }
 
 #[test]
-fn the_known_good_numbers() {
+fn the_corpus_has_what_it_was_designed_to_have() {
     let (mapping, docs) = corpus();
-    let total = |v: Value| -> u64 {
+    let run = |v: Value| -> Value {
         let req = parse_request(&v, mapping).unwrap();
-        evaluate(&req, mapping, docs).unwrap()["hits"]["total"]["value"]
-            .as_u64()
-            .unwrap()
+        evaluate(&req, mapping, docs).unwrap()
     };
-    assert_eq!(total(json!({"query": {"match_all": {}}})), 336);
-    assert_eq!(
-        total(json!({"query": {"bool": {"must_not": {"term": {"state_reason": "completed"}}}}})),
-        299
+    let total = |v: Value| run(v)["hits"]["total"]["value"].as_u64().unwrap();
+    assert_eq!(total(json!({"query": {"match_all": {}}})), 400);
+    // the two spellings of one publisher are two facet values, and one case-folded term
+    let p = run(json!({"size": 0, "aggs": {"p": {"terms": {"field": "publisher"}}}}));
+    let keys: Vec<&str> = p["aggregations"]["p"]["buckets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| b["key"].as_str().unwrap())
+        .collect();
+    assert!(
+        keys.contains(&"Nordlys Press") && keys.contains(&"nordlys press"),
+        "{:?}",
+        keys
+    );
+    let both = total(json!({"size": 0, "query": {"term": {"publisher": "NORDLYS PRESS"}}}));
+    assert!(
+        both == total(json!({"size": 0, "query": {"term": {"publisher": "Nordlys Press"}}}))
+            && both > 0
+    );
+    // records before the epoch exist and are found by a range on a date
+    assert!(
+        total(json!({"size": 0, "query": {"range": {"published_at": {"lt": "1970-01-01"}}}})) > 100
+    );
+    // the last second before the epoch is in the 1969 day bucket, not 1970
+    let d = run(
+        json!({"size": 0, "query": {"term": {"published_at": "1969-12-31T23:59:59Z"}}, "aggs": {"d": {"date_histogram": {"field": "published_at", "calendar_interval": "day"}}}}),
     );
     assert_eq!(
-        total(json!({"query": {"bool": {"must_not": {"term": {"draft": true}}}}})),
-        316
+        d["aggregations"]["d"]["buckets"][0]["key_as_string"],
+        json!("1969-12-31T00:00:00.000Z")
     );
+    // an array holding only an unparseable date is empty
+    let unparseable = docs
+        .iter()
+        .filter(|x| x["reprinted_at"] == json!(["not a date"]))
+        .count() as u64;
+    let empty = docs
+        .iter()
+        .filter(|x| x["reprinted_at"] == json!([]))
+        .count() as u64;
+    assert!(unparseable > 0);
     assert_eq!(
-        total(
-            json!({"query": {"bool": {"must_not": {"range": {"closed_at": {"gte": "2026-09-01"}}}}}})
-        ),
-        265
-    );
-    let req = parse_request(
-        &json!({"size": 0, "aggs": {"s": {"terms": {"field": "state"}}}}),
-        mapping,
-    )
-    .unwrap();
-    let res = evaluate(&req, mapping, docs).unwrap();
-    assert_eq!(
-        res["aggregations"]["s"]["buckets"],
-        json!([{"key": "closed", "doc_count": 241}, {"key": "open", "doc_count": 95}])
+        total(json!({"size": 0, "query": {"exists": {"field": "reprinted_at"}}}))
+            + unparseable
+            + empty,
+        400
     );
 }
 
-fn store() -> &'static Mutex<Store> {
-    static STORE: OnceLock<Mutex<Store>> = OnceLock::new();
-    STORE.get_or_init(|| {
-        let (mapping, docs) = corpus();
-        let s = Store::in_memory(mapping).unwrap();
-        s.load(docs).unwrap();
-        Mutex::new(s)
-    })
-}
+#[cfg(feature = "sqlite")]
+mod sqlite_differential {
+    use super::*;
+    use common::{close, explain};
+    use search_esque::store::Store;
+    use std::sync::Mutex;
 
-proptest! {
-    #![proptest_config(ProptestConfig { cases: 200, .. ProptestConfig::default() })]
+    fn store() -> &'static Mutex<Store> {
+        static STORE: OnceLock<Mutex<Store>> = OnceLock::new();
+        STORE.get_or_init(|| {
+            let (mapping, docs) = corpus();
+            let s = Store::in_memory(mapping).unwrap();
+            s.load(docs).unwrap();
+            Mutex::new(s)
+        })
+    }
 
-    /// The differential test: the SQLite executor must answer exactly as the reference evaluator
-    /// on every generated request, hits and aggregations alike.
-    #[test]
-    fn sqlite_agrees_with_the_evaluator(req in request()) {
-        let (mapping, docs) = corpus();
-        let evaluated = evaluate(&req, mapping, docs).unwrap();
-        let searched = store().lock().unwrap().search(&req).map_err(|e| TestCaseError::fail(e.to_string()))?;
-        prop_assert_eq!(&evaluated["hits"]["total"], &searched["hits"]["total"], "total\n{}", to_elasticsearch(&req));
-        prop_assert_eq!(&evaluated["hits"]["hits"], &searched["hits"]["hits"], "hits\n{}", to_elasticsearch(&req));
-        prop_assert_eq!(evaluated.get("aggregations"), searched.get("aggregations"), "aggregations\n{}", to_elasticsearch(&req));
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: cases(), .. ProptestConfig::default() })]
+
+        /// The differential test: the SQLite executor must answer as the reference evaluator on
+        /// every generated request, hits and aggregations alike (floats within 1e-9).
+        #[test]
+        fn sqlite_agrees_with_the_evaluator(req in request()) {
+            let (mapping, docs) = corpus();
+            let evaluated = evaluate(&req, mapping, docs).unwrap();
+            let searched = store().lock().unwrap().search(&req).map_err(|e| TestCaseError::fail(e.to_string()))?;
+            prop_assert_eq!(&evaluated["hits"]["total"], &searched["hits"]["total"], "total\n{}", to_elasticsearch(&req));
+            prop_assert!(close(&evaluated["hits"]["hits"], &searched["hits"]["hits"]), "hits differ: {:?}\n{}", explain(&evaluated["hits"]["hits"], &searched["hits"]["hits"]), to_elasticsearch(&req));
+            let (ea, sa) = (evaluated.get("aggregations").unwrap_or(&Value::Null), searched.get("aggregations").unwrap_or(&Value::Null));
+            prop_assert!(close(ea, sa), "aggregations differ: {:?}\n{}", explain(ea, sa), to_elasticsearch(&req));
+        }
     }
 }

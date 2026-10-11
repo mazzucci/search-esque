@@ -1,0 +1,17 @@
+{
+ "name": "match_all",
+ "request": {
+  "query": {
+   "match_all": {}
+  },
+  "size": 3
+ },
+ "expect": {
+  "total": 400,
+  "hit_ids": [
+   "b0001",
+   "b0002",
+   "b0003"
+  ]
+ }
+}

@@ -1,0 +1,14 @@
+{
+ "name": "exists_last_borrowed",
+ "request": {
+  "size": 0,
+  "query": {
+   "exists": {
+    "field": "last_borrowed_at"
+   }
+  }
+ },
+ "expect": {
+  "total": 216
+ }
+}

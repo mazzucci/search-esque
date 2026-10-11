@@ -1,0 +1,14 @@
+{
+ "name": "match_phrase_summary",
+ "request": {
+  "size": 0,
+  "query": {
+   "match_phrase": {
+    "summary": "salt bread"
+   }
+  }
+ },
+ "expect": {
+  "total": 79
+ }
+}

@@ -1,0 +1,14 @@
+{
+ "name": "match_phrase_notes_within_one_note",
+ "request": {
+  "size": 0,
+  "query": {
+   "match_phrase": {
+    "notes": "salt bread recipe"
+   }
+  }
+ },
+ "expect": {
+  "total": 64
+ }
+}

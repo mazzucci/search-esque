@@ -1,0 +1,14 @@
+{
+ "name": "match_title_cjk",
+ "request": {
+  "size": 0,
+  "query": {
+   "match": {
+    "title": "図書館の夜"
+   }
+  }
+ },
+ "expect": {
+  "total": 1
+ }
+}

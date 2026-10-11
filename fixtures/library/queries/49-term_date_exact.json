@@ -1,0 +1,14 @@
+{
+ "name": "term_date_exact",
+ "request": {
+  "size": 0,
+  "query": {
+   "term": {
+    "published_at": "1969-12-31T23:59:59Z"
+   }
+  }
+ },
+ "expect": {
+  "total": 10
+ }
+}

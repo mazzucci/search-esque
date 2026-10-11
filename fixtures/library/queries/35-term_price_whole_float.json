@@ -1,0 +1,14 @@
+{
+ "name": "term_price_whole_float",
+ "request": {
+  "size": 0,
+  "query": {
+   "term": {
+    "price": 42
+   }
+  }
+ },
+ "expect": {
+  "total": 0
+ }
+}

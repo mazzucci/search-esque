@@ -1,0 +1,17 @@
+{
+ "name": "match_title_and",
+ "request": {
+  "size": 0,
+  "query": {
+   "match": {
+    "title": {
+     "query": "harbour letters",
+     "operator": "and"
+    }
+   }
+  }
+ },
+ "expect": {
+  "total": 7
+ }
+}

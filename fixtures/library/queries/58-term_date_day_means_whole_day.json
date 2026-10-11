@@ -1,0 +1,14 @@
+{
+ "name": "term_date_day_means_whole_day",
+ "request": {
+  "size": 0,
+  "query": {
+   "term": {
+    "added_at": "2026-03-15"
+   }
+  }
+ },
+ "expect": {
+  "total": 1
+ }
+}

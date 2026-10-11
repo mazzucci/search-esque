@@ -1,0 +1,24 @@
+{
+ "name": "err_wildcard",
+ "request": {
+  "query": {
+   "bool": {
+    "filter": [
+     {
+      "term": {
+       "format": "ebook"
+      }
+     },
+     {
+      "wildcard": {
+       "title": "har*"
+      }
+     }
+    ]
+   }
+  }
+ },
+ "expect": {
+  "error_path": "query.bool.filter[1].wildcard"
+ }
+}

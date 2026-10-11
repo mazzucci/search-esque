@@ -1,0 +1,17 @@
+{
+ "name": "page_past_the_end",
+ "request": {
+  "query": {
+   "match_all": {}
+  },
+  "size": 5,
+  "from": 398
+ },
+ "expect": {
+  "total": 400,
+  "hit_ids": [
+   "b0399",
+   "b0400"
+  ]
+ }
+}

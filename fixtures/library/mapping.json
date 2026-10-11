@@ -1,0 +1,68 @@
+{
+ "properties": {
+  "title": {
+   "type": "text"
+  },
+  "summary": {
+   "type": "text"
+  },
+  "author": {
+   "type": "keyword"
+  },
+  "publisher": {
+   "type": "keyword"
+  },
+  "language": {
+   "type": "keyword"
+  },
+  "format": {
+   "type": "keyword"
+  },
+  "genres": {
+   "type": "keyword",
+   "array": true
+  },
+  "tags": {
+   "type": "keyword",
+   "array": true
+  },
+  "pages": {
+   "type": "long"
+  },
+  "price": {
+   "type": "double"
+  },
+  "rating": {
+   "type": "double"
+  },
+  "balance": {
+   "type": "double"
+  },
+  "copies": {
+   "type": "long"
+  },
+  "available": {
+   "type": "boolean"
+  },
+  "published_at": {
+   "type": "date"
+  },
+  "added_at": {
+   "type": "date"
+  },
+  "last_borrowed_at": {
+   "type": "date"
+  },
+  "isbn": {
+   "type": "keyword"
+  },
+  "reprinted_at": {
+   "type": "date",
+   "array": true
+  },
+  "notes": {
+   "type": "text",
+   "array": true
+  }
+ }
+}

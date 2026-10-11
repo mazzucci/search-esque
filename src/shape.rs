@@ -153,6 +153,24 @@ fn too_many(n: u64, what: &str) -> Error {
     .hint("use a larger interval or narrow the query")
 }
 
+/// Checks a histogram's bounds before any bucketing: more than `MAX_BUCKETS` between the first
+/// and last bucket is refused as Elasticsearch does, and values whose bucket index would not
+/// fit in 53 bits are refused too, since neither engine could compute them exactly.
+pub fn histogram_bounds(min: f64, max: f64, interval: f64) -> Result<()> {
+    let (lo, hi) = ((min / interval).floor(), (max / interval).floor());
+    if lo.abs() > 9.0e15 || hi.abs() > 9.0e15 || !lo.is_finite() || !hi.is_finite() {
+        return Err(Error::new(
+            "aggs",
+            "the histogram's values are too large for this interval",
+        )
+        .hint("use a larger interval"));
+    }
+    if hi - lo + 1.0 > MAX_BUCKETS as f64 {
+        return Err(too_many((hi - lo + 1.0) as u64, "histogram"));
+    }
+    Ok(())
+}
+
 /// A `histogram` from bucket index (value divided by interval, floored) to count. Empty
 /// buckets between the first and last are filled when `min_doc_count` allows, as in
 /// Elasticsearch, and a histogram that would exceed `MAX_BUCKETS` is refused as it is there.
