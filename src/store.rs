@@ -65,7 +65,7 @@ impl Store {
             return Err(Error::new("db", format!("{} exists already", path))
                 .hint("remove it, or load into a new file"));
         }
-        let tmp = format!("{}.building", path);
+        let tmp = format!("{}.building.{}", path, std::process::id());
         let _ = std::fs::remove_file(&tmp);
         let result = (|| {
             let store = Store::init(Connection::open(&tmp).map_err(db_err)?, mapping)?;
@@ -127,7 +127,17 @@ impl Store {
             )
             .map_err(|_| Error::new("db", format!("{} is not an esque store", path)))
         };
-        let format = read("format")?;
+        let format = read("format").map_err(|e| {
+            if read("mapping").is_ok() {
+                Error::new(
+                    "db",
+                    format!("{} was built by an older build and has no format tag", path),
+                )
+                .hint("rebuild it with `esque load`")
+            } else {
+                e
+            }
+        })?;
         if format != FORMAT {
             return Err(Error::new(
                 "db",
@@ -226,7 +236,10 @@ impl Store {
         } else {
             let mut out = Map::new();
             for a in &c.aggs {
-                out.insert(a.name.clone(), self.aggregate(tx, a)?);
+                let value = self
+                    .aggregate(tx, a)
+                    .map_err(|e| e.at(format!("aggs.{}", a.name)))?;
+                out.insert(a.name.clone(), value);
             }
             Some(out)
         };
@@ -279,7 +292,15 @@ impl Store {
                 min_doc_count,
                 ..
             } => {
-                let counts = Store::bucket_counts(tx, first)?;
+                let bounds: (Option<f64>, Option<f64>) = tx
+                    .query_row(&first.sql, params_from_iter(first.params.iter()), |r| {
+                        Ok((r.get(0)?, r.get(1)?))
+                    })
+                    .map_err(db_err)?;
+                if let (Some(lo), Some(hi)) = bounds {
+                    shape::histogram_bounds(lo, hi, *interval)?;
+                }
+                let counts = Store::bucket_counts(tx, &a.statements[1])?;
                 shape::histogram(&counts, *interval, *min_doc_count)?
             }
             AggKind::DateHistogram {

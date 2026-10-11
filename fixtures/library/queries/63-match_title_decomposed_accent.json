@@ -1,0 +1,14 @@
+{
+ "name": "match_title_decomposed_accent",
+ "request": {
+  "size": 0,
+  "query": {
+   "match": {
+    "title": "café"
+   }
+  }
+ },
+ "expect": {
+  "total": 1
+ }
+}

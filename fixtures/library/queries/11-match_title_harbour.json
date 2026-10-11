@@ -1,0 +1,14 @@
+{
+ "name": "match_title_harbour",
+ "request": {
+  "size": 0,
+  "query": {
+   "match": {
+    "title": "harbour"
+   }
+  }
+ },
+ "expect": {
+  "total": 75
+ }
+}

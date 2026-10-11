@@ -1,0 +1,34 @@
+{
+ "name": "sort_price_desc_missing_last",
+ "request": {
+  "query": {
+   "match_all": {}
+  },
+  "sort": [
+   {
+    "price": {
+     "order": "desc"
+    }
+   }
+  ],
+  "size": 5,
+  "_source": [
+   "title",
+   "price"
+  ]
+ },
+ "expect": {
+  "total": 400,
+  "hit_ids": [
+   "b0366",
+   "b0359",
+   "b0317",
+   "b0043",
+   "b0238"
+  ],
+  "source_keys": [
+   "price",
+   "title"
+  ]
+ }
+}

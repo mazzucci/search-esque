@@ -1,0 +1,29 @@
+{
+ "name": "sort_rating_asc_missing_last_at_end",
+ "request": {
+  "query": {
+   "match_all": {}
+  },
+  "sort": [
+   {
+    "rating": "asc"
+   }
+  ],
+  "size": 3,
+  "from": 397,
+  "_source": [
+   "rating"
+  ]
+ },
+ "expect": {
+  "total": 400,
+  "hit_ids": [
+   "b0386",
+   "b0393",
+   "b0400"
+  ],
+  "source_keys": [
+   "rating"
+  ]
+ }
+}

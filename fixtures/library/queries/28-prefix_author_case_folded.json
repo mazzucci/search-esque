@@ -1,0 +1,14 @@
+{
+ "name": "prefix_author_case_folded",
+ "request": {
+  "size": 0,
+  "query": {
+   "prefix": {
+    "author": "ad"
+   }
+  }
+ },
+ "expect": {
+  "total": 15
+ }
+}

@@ -41,12 +41,13 @@ Deliberate differences from Elasticsearch, each held by a test:
 - With no `sort`, hits come back in `_id` order.
 - Text is tokenized exactly as FTS5's `unicode61` does (measured against SQLite, not assumed:
   `dev/tokenizer_parity.py`): split at spaces, punctuation and symbols, lower-cased with Unicode
-  simple case folding, diacritics kept. Elasticsearch's standard analyzer keeps `doesn't` and
-  `v1.41.0` whole; here they split. There is no stemming.
+  FTS5's own case folding, diacritics kept, every code point checked. Elasticsearch's standard
+  analyzer keeps `doesn't` and `v1.41.0` whole; here they split. There is no stemming, and FTS5
+  cuts a single token at 32 KB where the evaluator does not.
 - A value that does not fit its field's type is empty: `exists` is false for it and it matches
   nothing. Elasticsearch would have refused the record at indexing time.
 
-Checked against a real Elasticsearch 9.5.5 (`dev/es_parity.py`, single shard, same 336 records):
+Checked against a real Elasticsearch 9.5.5 (`dev/es_parity.py`, single shard, same records):
 every fixture matches, including date-only range bounds rounding up for `gt` and `lte`, range
 buckets ordered by `from`, and `minimum_should_match: 0` still needing one `should`.
 
@@ -71,18 +72,18 @@ but `text`.
 
 ```bash
 cargo build --release
-F=fixtures/github-issues
+F=fixtures/library
 
 # build a store from JSON records, then query it
-target/release/esque load --mapping $F/mapping.json --docs $F/docs.json --db issues.db
-target/release/esque search --db issues.db '{
-  "query": {"bool": {"filter": [{"term": {"state": "open"}}, {"terms": {"labels": ["bug"]}}]}},
-  "aggs": {"labels": {"terms": {"field": "labels", "size": 5}}},
-  "sort": [{"comments": "desc"}], "size": 3
+target/release/esque load --mapping $F/mapping.json --docs $F/docs.json --db library.db
+target/release/esque search --db library.db '{
+  "query": {"bool": {"filter": [{"term": {"available": true}}, {"terms": {"genres": ["mystery"]}}]}},
+  "aggs": {"genres": {"terms": {"field": "genres", "size": 5}}},
+  "sort": [{"rating": "desc"}], "size": 3
 }'
 
 # or see the SQL a request compiles to
-target/release/esque compile --mapping $F/mapping.json '{"query": {"term": {"state": "open"}}, "size": 0}'
+target/release/esque compile --mapping $F/mapping.json '{"query": {"term": {"format": "ebook"}}, "size": 0}'
 ```
 
 `esque compile` prints the statements and their bound parameters. `esque parse` prints the
@@ -110,9 +111,13 @@ WebAssembly.
 
 ## How it is tested
 
-- `fixtures/github-issues`: 336 real GitHub issues and pull requests from one public open-source
-  project's repository (fetched 2026-10-10) with an Elasticsearch-style mapping, and 46 request fixtures whose
-  expectations were computed by an independent Python oracle (`dev/python_oracle.py`).
+- `fixtures/library`: a generated corpus of 400 records, an invented library catalogue
+  (`dev/make_corpus.py`, seeded, nothing taken from any real dataset), designed to hold what
+  breaks compilers: case variants, awkward characters in keywords, empty and duplicate array
+  values, a date array and a text array, whole-number floats, negatives, nulls in every type,
+  dates before 1970, decomposed accents. With it, an Elasticsearch-style mapping and 78 request
+  fixtures whose expectations were computed by an independent Python oracle
+  (`dev/python_oracle.py`) and pinned to a real Elasticsearch.
 - Both engines, the evaluator and the SQLite store, answer every fixture, and are compared to
   each other on the whole response: total, hits in order with `_source`, aggregations.
 - Property tests (`tests/properties.rs`): printing an AST to Elasticsearch JSON and parsing it

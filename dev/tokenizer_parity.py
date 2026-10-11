@@ -6,6 +6,7 @@ through an FTS5 table with the store's tokenizer options, and compares the sets 
 tokens. Python's own sqlite3 module provides FTS5.
 
     cargo build --release && python3 dev/tokenizer_parity.py [fixtures/<corpus>]
+    python3 dev/tokenizer_parity.py --all          # every code point, about a minute
 """
 import json
 import sqlite3
@@ -43,7 +44,32 @@ def esque_tokens(texts):
     return out
 
 
+def every_code_point():
+    """Every code point through both tokenizers, in batches, each wrapped in a marker so the
+    result says which character split or folded differently."""
+    cps = [cp for cp in range(1, 0x110000) if not 0xD800 <= cp <= 0xDFFF]
+    bad = []
+    for i in range(0, len(cps), 30000):
+        chunk = cps[i:i + 30000]
+        text = " ".join("q%06xz%sz" % (cp, chr(cp)) for cp in chunk)
+        mine = set(json.loads(subprocess.run([str(ESQUE), "tokens", text], capture_output=True, text=True).stdout))
+        theirs = set(json.loads(subprocess.run([str(ESQUE), "fts-tokens", text], capture_output=True, text=True).stdout))
+        for term in mine ^ theirs:
+            if term.startswith("q") and len(term) >= 7:
+                try:
+                    bad.append(int(term[1:7], 16))
+                except ValueError:
+                    pass
+    bad = sorted(set(bad))
+    for cp in bad[:30]:
+        print("DIFFERS U+%04X %r" % (cp, chr(cp)))
+    print(f"\n{len(cps) - len(bad)} of {len(cps)} code points tokenize identically against the store's bundled SQLite")
+    sys.exit(1 if bad else 0)
+
+
 def main():
+    if "--all" in sys.argv:
+        every_code_point()
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     corpus = Path(args[0]) if args else next(ROOT.glob("fixtures/*/docs.json")).parent
     mapping = json.load(open(corpus / "mapping.json"))["properties"]

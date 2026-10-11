@@ -2,18 +2,19 @@
 """An independent seed oracle for the fixtures.
 
 Computes, in plain Python and without reading the Rust code, what each fixture request must
-answer over fixtures/github-issues/docs.json, and writes the fixture files. It covers only the
-constructs the fixtures use. Once the Rust evaluator agrees with these files, the evaluator is
-the reference and this script is history; keep it for re-seeding if the corpus changes.
+answer over fixtures/library/docs.json (the generated corpus, see dev/make_corpus.py), and
+writes the fixture files. It covers only the constructs the fixtures use. Once the Rust
+evaluator agrees with these files, the evaluator is the reference and this script is history;
+keep it for re-seeding if the corpus changes.
 
     python3 dev/python_oracle.py
 """
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent / "fixtures" / "github-issues"
+ROOT = Path(__file__).resolve().parent.parent / "fixtures" / "library"
 DOCS = json.load(open(ROOT / "docs.json"))
 MAPPING = json.load(open(ROOT / "mapping.json"))["properties"]
 MS_DAY = 86_400_000
@@ -21,7 +22,11 @@ MS_DAY = 86_400_000
 
 def ftype(field):
     t = MAPPING[field]["type"]
-    return {"long": "number", "boolean": "boolean"}.get(t, t)
+    return {"long": "number", "double": "number", "boolean": "boolean"}.get(t, t)
+
+
+def is_array(field):
+    return MAPPING[field].get("array", False)
 
 
 def parse_iso(s):
@@ -34,18 +39,38 @@ def parse_iso(s):
 
 
 def values(doc, field):
+    """The field's values that fit its type; anything else is empty (as both engines treat it)."""
     v = doc.get(field)
     if v is None:
+        return []
+    if isinstance(v, list) and not is_array(field):
         return []
     items = [x for x in v if x is not None] if isinstance(v, list) else [v]
     t = ftype(field)
     if t == "date":
-        return [parse_iso(x) for x in items]
-    return items
+        out = []
+        for x in items:
+            try:
+                out.append(parse_iso(x))
+            except (ValueError, TypeError, AttributeError):
+                pass
+        return out
+    if t == "number":
+        return [x for x in items if isinstance(x, (int, float)) and not isinstance(x, bool)]
+    if t == "boolean":
+        return [x for x in items if isinstance(x, bool)]
+    return [x for x in items if isinstance(x, str)]
+
+
+def fold(s):
+    # the profile's case fold is Unicode simple folding; the one case this corpus has is µ to μ
+    return s.lower().replace("\u00b5", "\u03bc")
 
 
 def tokens(s):
-    return [t.lower() for t in re.findall(r"[^\W_]+", s)]
+    # separators as FTS5 unicode61: everything that is not a letter, digit or combining mark;
+    # good enough for this corpus, the Rust table is the measured truth
+    return [fold(t) for t in re.findall(r"[\w\u0300-\u036f]+", s.replace("_", " ")) if t]
 
 
 def norm(field, v):
@@ -55,6 +80,12 @@ def norm(field, v):
     if t in ("keyword", "text") and isinstance(v, str):
         return v.lower()
     return v
+
+
+def as_list(v):
+    if v is None:
+        return []
+    return v if isinstance(v, list) else [v]
 
 
 def matches(q, doc):
@@ -77,12 +108,23 @@ def matches(q, doc):
     if kind == "term":
         (field, spec), = body.items()
         want = spec["value"] if isinstance(spec, dict) else spec
+        if ftype(field) == "date" and len(want) == 10:
+            lo = parse_iso(want)
+            return any(lo <= v <= lo + MS_DAY - 1 for v in values(doc, field))
         want = norm(field, want)
-        return any(norm(field, v) == want if ftype(field) != "date" else v == want for v in values(doc, field))
+        return any((norm(field, v) if ftype(field) != "date" else v) == want for v in values(doc, field))
     if kind == "terms":
         (field, vals), = body.items()
+        if ftype(field) == "date":
+            vs = values(doc, field)
+            for w in vals:
+                lo = parse_iso(w)
+                hi = lo + MS_DAY - 1 if len(w) == 10 else lo
+                if any(lo <= v <= hi for v in vs):
+                    return True
+            return False
         wanted = {norm(field, v) for v in vals}
-        return any((norm(field, v) if ftype(field) != "date" else v) in wanted for v in values(doc, field))
+        return any(norm(field, v) in wanted for v in values(doc, field))
     if kind == "range":
         (field, b), = body.items()
         is_date = ftype(field) == "date"
@@ -125,12 +167,6 @@ def matches(q, doc):
     raise ValueError(kind)
 
 
-def as_list(v):
-    if v is None:
-        return []
-    return v if isinstance(v, list) else [v]
-
-
 def es_double(n):
     return f"{int(n)}.0" if float(n).is_integer() else repr(float(n))
 
@@ -144,19 +180,30 @@ def iso(ms):
     return d.strftime("%Y-%m-%dT%H:%M:%S.") + f"{d.microsecond // 1000:03d}Z"
 
 
-def month_start(ms):
+def bucket_start(ms, iv):
     d = datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
-    return int(datetime(d.year, d.month, 1, tzinfo=timezone.utc).timestamp() * 1000)
+    if iv == "year":
+        d = datetime(d.year, 1, 1, tzinfo=timezone.utc)
+    elif iv == "month":
+        d = datetime(d.year, d.month, 1, tzinfo=timezone.utc)
+    else:
+        d = datetime(d.year, d.month, d.day, tzinfo=timezone.utc)
+    return int(d.timestamp() * 1000)
 
 
-def next_month(ms):
+def next_bucket(ms, iv):
     d = datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
-    y, m = (d.year + 1, 1) if d.month == 12 else (d.year, d.month + 1)
-    return int(datetime(y, m, 1, tzinfo=timezone.utc).timestamp() * 1000)
+    if iv == "year":
+        n = datetime(d.year + 1, 1, 1, tzinfo=timezone.utc)
+    elif iv == "month":
+        y, m = (d.year + 1, 1) if d.month == 12 else (d.year, d.month + 1)
+        n = datetime(y, m, 1, tzinfo=timezone.utc)
+    else:
+        n = d + timedelta(days=1)
+    return int(n.timestamp() * 1000)
 
 
 def key_sort(k):
-    # bool < number < string, as the Rust Key ordering does
     if isinstance(k, bool):
         return (0, k)
     if isinstance(k, (int, float)):
@@ -189,11 +236,10 @@ def aggregate(spec, docs):
             elif t == "date":
                 buckets.append({"key": k, "key_as_string": iso(k), "doc_count": c})
             else:
-                buckets.append({"key": k, "doc_count": c})
+                buckets.append({"key": num(k) if t == "number" else k, "doc_count": c})
         return {"doc_count_error_upper_bound": 0, "sum_other_doc_count": sum(c for _, c in rest), "buckets": buckets}
     if kind == "range":
         out = []
-        # Elasticsearch orders range buckets by from, then to, open ends first and last
         ordered = sorted(body["ranges"], key=lambda r: (r.get("from", float("-inf")), r.get("to", float("inf"))))
         for r in ordered:
             lo, hi = r.get("from"), r.get("to")
@@ -218,10 +264,10 @@ def aggregate(spec, docs):
                     out.append({"key": num(b * iv), "doc_count": c})
         return {"buckets": out}
     if kind == "date_histogram":
-        assert body["calendar_interval"] in ("month", "1M")
+        iv = {"1M": "month", "1y": "year", "1d": "day"}.get(body["calendar_interval"], body["calendar_interval"])
         counts = {}
         for d in docs:
-            for b in {month_start(v) for v in values(d, field)}:
+            for b in {bucket_start(v, iv) for v in values(d, field)}:
                 counts[b] = counts.get(b, 0) + 1
         out = []
         if counts:
@@ -230,9 +276,12 @@ def aggregate(spec, docs):
                 c = counts.get(b, 0)
                 if c >= body.get("min_doc_count", 0):
                     out.append({"key_as_string": iso(b), "key": b, "doc_count": c})
-                b = next_month(b)
+                b = next_bucket(b, iv)
         return {"buckets": out}
     if kind == "value_count":
+        # keyword arrays: Elasticsearch's sorted-set doc values count a repeated value once per record
+        if is_array(field) and t == "keyword":
+            return {"value": sum(len(set(values(d, field))) for d in docs)}
         return {"value": sum(len(values(d, field)) for d in docs)}
     if kind == "cardinality":
         return {"value": len({v for d in docs for v in values(d, field)})}
@@ -271,17 +320,12 @@ def run(request):
             else:
                 v = vs[0]
                 if isinstance(v, str):
-                    # strings: desc is emulated by sorting separately below
+                    assert order == "asc", "the oracle only sorts strings ascending"
                     parts.append((0, v))
                 else:
                     parts.append((0, -v if order == "desc" else v))
         return parts + [d["_id"]]
 
-    for s in sorts:
-        if not isinstance(s, str):
-            (field, spec), = s.items()
-            order = spec if isinstance(spec, str) else spec.get("order", "asc")
-            assert not (order == "desc" and ftype(field) in ("keyword",)), "the oracle only sorts strings ascending"
     hits.sort(key=sort_key)
     size, frm = request.get("size", 10), request.get("from", 0)
     page = hits[frm:frm + size]
@@ -300,69 +344,99 @@ def run(request):
 
 FIXTURES = [
     ("match_all", {"query": {"match_all": {}}, "size": 3}),
-    ("state_terms", {"size": 0, "aggs": {"by_state": {"terms": {"field": "state"}}}}),
-    ("must_not_term_state_reason", {"size": 0, "query": {"bool": {"must_not": {"term": {"state_reason": "completed"}}}}}),
-    ("must_not_term_draft", {"size": 0, "query": {"bool": {"must_not": {"term": {"draft": True}}}}}),
-    ("must_not_range_closed_at", {"size": 0, "query": {"bool": {"must_not": {"range": {"closed_at": {"gte": "2026-09-01"}}}}}}),
-    ("open_bugs_by_label", {
-        "query": {"bool": {"filter": [{"term": {"state": "open"}}, {"terms": {"labels": ["bug"]}}]}},
-        "aggs": {"labels": {"terms": {"field": "labels", "size": 5}}},
-        "sort": [{"comments": "desc"}], "size": 10}),
-    ("comments_gte_5_stats", {"size": 0, "query": {"range": {"comments": {"gte": 5}}},
-        "aggs": {"c": {"stats": {"field": "comments"}}, "avg": {"avg": {"field": "comments"}}, "mx": {"max": {"field": "reactions"}}}}),
-    ("open_created_per_month", {"size": 0, "query": {"term": {"state": "open"}},
-        "aggs": {"per_month": {"date_histogram": {"field": "created_at", "calendar_interval": "month"}}}}),
-    ("open_created_per_month_min1", {"size": 0, "query": {"term": {"state": "open"}},
-        "aggs": {"per_month": {"date_histogram": {"field": "created_at", "calendar_interval": "month", "min_doc_count": 1}}}}),
-    ("match_title_facet", {"size": 0, "query": {"match": {"title": "facet"}}}),
-    ("match_title_and", {"size": 0, "query": {"match": {"title": {"query": "facet counts", "operator": "and"}}}}),
-    ("match_title_or", {"size": 0, "query": {"match": {"title": {"query": "facet counts", "operator": "or"}}}}),
-    ("match_phrase_title", {"size": 0, "query": {"match_phrase": {"title": "chat completions"}}}),
-    ("exists_closed_by", {"size": 0, "query": {"exists": {"field": "closed_by"}}}),
-    ("not_exists_closed_by", {"size": 0, "query": {"bool": {"must_not": {"exists": {"field": "closed_by"}}}}}),
-    ("comments_histogram", {"size": 0, "aggs": {"h": {"histogram": {"field": "comments", "interval": 5}}}}),
-    ("comments_ranges", {"size": 0, "aggs": {"r": {"range": {"field": "comments", "ranges": [{"to": 1}, {"from": 1, "to": 5}, {"from": 5, "key": "many"}]}}}}),
-    ("should_open_or_completed", {"size": 0, "query": {"bool": {"should": [{"term": {"state": "open"}}, {"term": {"state_reason": "completed"}}]}}}),
-    ("should_with_must_is_optional", {"size": 0, "query": {"bool": {"must": {"term": {"state": "closed"}}, "should": [{"term": {"author": "nobody-here"}}]}}}),
-    ("should_with_must_msm1", {"size": 0, "query": {"bool": {"must": {"term": {"state": "closed"}}, "should": [{"term": {"state_reason": "completed"}}], "minimum_should_match": 1}}}),
-    ("prefix_author", {"size": 0, "query": {"prefix": {"author": "ker"}}}),
-    ("prefix_title_token", {"size": 0, "query": {"prefix": {"title": "fac"}}}),
-    ("sort_comments_desc", {"query": {"match_all": {}}, "sort": [{"comments": {"order": "desc"}}], "size": 5}),
-    ("sort_created_asc_from", {"query": {"term": {"state": "open"}}, "sort": ["created_at"], "size": 4, "from": 2}),
-    ("term_case_insensitive", {"size": 0, "query": {"term": {"state": "OPEN"}}}),
-    ("cardinality_and_value_count", {"size": 0, "aggs": {"authors": {"cardinality": {"field": "author"}}, "label_values": {"value_count": {"field": "labels"}}, "n": {"value_count": {"field": "closed_by"}}}}),
-    ("source_fields", {"query": {"match_all": {}}, "size": 1, "_source": ["title", "state"]}),
+    ("format_terms", {"size": 0, "aggs": {"by_format": {"terms": {"field": "format"}}}}),
+    ("must_not_term_language", {"size": 0, "query": {"bool": {"must_not": {"term": {"language": "en"}}}}}),
+    ("must_not_term_available_includes_missing", {"size": 0, "query": {"bool": {"must_not": {"term": {"available": True}}}}}),
+    ("must_not_range_published_since_1970", {"size": 0, "query": {"bool": {"must_not": {"range": {"published_at": {"gte": "1970-01-01"}}}}}}),
+    ("available_mysteries_by_genre", {
+        "query": {"bool": {"filter": [{"term": {"available": True}}, {"terms": {"genres": ["mystery"]}}]}},
+        "aggs": {"genres": {"terms": {"field": "genres", "size": 5}}},
+        "sort": [{"rating": "desc"}], "size": 10}),
+    ("long_books_stats", {"size": 0, "query": {"range": {"pages": {"gte": 500}}},
+        "aggs": {"p": {"stats": {"field": "pages"}}, "price": {"avg": {"field": "price"}}, "balance": {"max": {"field": "balance"}}, "copies": {"sum": {"field": "copies"}}}}),
+    ("ebooks_added_per_month", {"size": 0, "query": {"term": {"format": "ebook"}},
+        "aggs": {"per_month": {"date_histogram": {"field": "added_at", "calendar_interval": "month"}}}}),
+    ("published_per_year_before_1970", {"size": 0, "query": {"range": {"published_at": {"lt": "1970-01-01"}}},
+        "aggs": {"per_year": {"date_histogram": {"field": "published_at", "calendar_interval": "year", "min_doc_count": 1}}}}),
+    ("published_per_day_across_the_epoch", {"size": 0, "query": {"range": {"published_at": {"gte": "1969-12-30", "lt": "1970-01-03"}}},
+        "aggs": {"per_day": {"date_histogram": {"field": "published_at", "calendar_interval": "day"}}}}),
+    ("match_title_harbour", {"size": 0, "query": {"match": {"title": "harbour"}}}),
+    ("match_title_and", {"size": 0, "query": {"match": {"title": {"query": "harbour letters", "operator": "and"}}}}),
+    ("match_title_or", {"size": 0, "query": {"match": {"title": {"query": "harbour letters", "operator": "or"}}}}),
+    ("match_phrase_summary", {"size": 0, "query": {"match_phrase": {"summary": "salt bread"}}}),
+    ("match_title_accent", {"size": 0, "query": {"match": {"title": "café"}}}),
+    ("match_title_cjk", {"size": 0, "query": {"match": {"title": "図書館の夜"}}}),
+    ("exists_last_borrowed", {"size": 0, "query": {"exists": {"field": "last_borrowed_at"}}}),
+    ("not_exists_last_borrowed", {"size": 0, "query": {"bool": {"must_not": {"exists": {"field": "last_borrowed_at"}}}}}),
+    ("exists_genres_empty_is_missing", {"size": 0, "query": {"exists": {"field": "genres"}}}),
+    ("copies_histogram", {"size": 0, "aggs": {"h": {"histogram": {"field": "copies", "interval": 3}}}}),
+    ("balance_histogram_negative", {"size": 0, "aggs": {"h": {"histogram": {"field": "balance", "interval": 20}}}}),
+    ("price_ranges", {"size": 0, "aggs": {"r": {"range": {"field": "price", "ranges": [{"to": 10}, {"from": 10, "to": 30}, {"from": 30, "key": "pricey"}]}}}}),
+    ("range_agg_ordered_by_from", {"size": 0, "aggs": {"r": {"range": {"field": "balance", "ranges": [{"from": 0, "to": 20}, {"from": 20}, {"to": 0}]}}}}),
+    ("should_fr_or_de", {"size": 0, "query": {"bool": {"should": [{"term": {"language": "fr"}}, {"term": {"language": "de"}}]}}}),
+    ("should_with_must_is_optional", {"size": 0, "query": {"bool": {"must": {"term": {"format": "paperback"}}, "should": [{"term": {"author": "nobody-here"}}]}}}),
+    ("should_with_must_msm1", {"size": 0, "query": {"bool": {"must": {"term": {"format": "paperback"}}, "should": [{"term": {"language": "fr"}}], "minimum_should_match": 1}}}),
+    ("msm_zero_should_only_needs_one", {"size": 0, "query": {"bool": {"should": [{"term": {"language": "fr"}}], "minimum_should_match": 0}}}),
+    ("prefix_author_case_folded", {"size": 0, "query": {"prefix": {"author": "ad"}}}),
+    ("prefix_tag_percent_is_literal", {"size": 0, "query": {"prefix": {"tags": "50%"}}}),
+    ("prefix_tag_underscore_is_literal", {"size": 0, "query": {"prefix": {"tags": "50%_o"}}}),
+    ("prefix_title_token", {"size": 0, "query": {"prefix": {"title": "lan"}}}),
+    ("term_tag_with_quote", {"size": 0, "query": {"term": {"tags": "quote\"d"}}}),
+    ("term_tag_with_backslash", {"size": 0, "query": {"term": {"tags": "back\\slash"}}}),
+    ("term_genre_counts_duplicates_once", {"size": 0, "query": {"term": {"genres": "poetry"}}, "aggs": {"g": {"terms": {"field": "genres", "size": 20}}}}),
+    ("term_price_whole_float", {"size": 0, "query": {"term": {"price": 42}}}),
+    ("sort_price_desc_missing_last", {"query": {"match_all": {}}, "sort": [{"price": {"order": "desc"}}], "size": 5, "_source": ["title", "price"]}),
+    ("sort_published_asc_from", {"query": {"term": {"format": "hardcover"}}, "sort": ["published_at"], "size": 4, "from": 2}),
+    ("sort_rating_asc_missing_last_at_end", {"query": {"match_all": {}}, "sort": [{"rating": "asc"}], "size": 3, "from": 397, "_source": ["rating"]}),
+    ("term_case_insensitive", {"size": 0, "query": {"term": {"publisher": "NORDLYS PRESS"}}}),
+    ("publisher_terms_keep_case_variants_apart", {"size": 0, "aggs": {"p": {"terms": {"field": "publisher"}}}}),
+    ("cardinality_and_value_count", {"size": 0, "aggs": {"authors": {"cardinality": {"field": "author"}}, "genre_values": {"value_count": {"field": "genres"}}, "tag_values": {"value_count": {"field": "tags"}}, "borrowed": {"value_count": {"field": "last_borrowed_at"}}, "prices": {"cardinality": {"field": "price"}}}}),
+    ("source_fields", {"query": {"match_all": {}}, "size": 1, "_source": ["title", "price"]}),
     ("source_false", {"query": {"match_all": {}}, "size": 2, "_source": False}),
-    ("post_filter_keeps_aggs", {"size": 0, "aggs": {"by_state": {"terms": {"field": "state"}}}, "post_filter": {"term": {"state": "open"}}}),
-    ("draft_terms_boolean", {"size": 0, "aggs": {"d": {"terms": {"field": "draft"}}}}),
+    ("post_filter_keeps_aggs", {"size": 0, "aggs": {"by_format": {"terms": {"field": "format"}}}, "post_filter": {"term": {"format": "ebook"}}}),
+    ("available_terms_boolean", {"size": 0, "aggs": {"a": {"terms": {"field": "available"}}}}),
     ("author_terms_key_asc", {"size": 0, "aggs": {"a": {"terms": {"field": "author", "size": 3, "order": {"_key": "asc"}}}}}),
-    ("author_type_count_asc", {"size": 0, "aggs": {"a": {"terms": {"field": "author_type", "order": {"_count": "asc"}}}}}),
-    ("terms_date_field", {"size": 0, "query": {"term": {"created_at": "2026-10-08T15:41:59Z"}}}),
-    ("range_date_window", {"size": 0, "query": {"range": {"created_at": {"gte": "2026-07-01", "lt": "2026-10-01"}}},
-        "aggs": {"by_state": {"terms": {"field": "state"}}}}),
-    ("page_past_the_end", {"query": {"match_all": {}}, "size": 5, "from": 334}),
-    ("filter_vs_must_same", {"size": 0, "query": {"bool": {"must": [{"term": {"state": "open"}}], "filter": [{"exists": {"field": "closed_by"}}]}}}),
-    # Pinned to Elasticsearch 9.5.5's answers on 2026-10-10 (dev/es_parity.py): 269, 67, 95
-    ("range_date_lte_rounds_up", {"size": 0, "query": {"range": {"created_at": {"lte": "2026-09-01"}}}}),
-    ("range_date_gt_rounds_up", {"size": 0, "query": {"range": {"created_at": {"gt": "2026-09-01"}}}}),
-    ("msm_zero_should_only_needs_one", {"size": 0, "query": {"bool": {"should": [{"term": {"state": "open"}}], "minimum_should_match": 0}}}),
-    ("range_agg_ordered_by_from", {"size": 0, "aggs": {"r": {"range": {"field": "reactions", "ranges": [{"from": 0, "to": 1}, {"from": 1}, {"to": 0}]}}}}),
+    ("language_count_asc", {"size": 0, "aggs": {"l": {"terms": {"field": "language", "order": {"_count": "asc"}}}}}),
+    ("price_terms_double_keys", {"size": 0, "aggs": {"p": {"terms": {"field": "price", "size": 5}}}}),
+    ("term_date_exact", {"size": 0, "query": {"term": {"published_at": "1969-12-31T23:59:59Z"}}}),
+    ("range_date_window", {"size": 0, "query": {"range": {"added_at": {"gte": "2026-01-01", "lt": "2026-07-01"}}},
+        "aggs": {"by_format": {"terms": {"field": "format"}}}}),
+    ("range_date_lte_rounds_up", {"size": 0, "query": {"range": {"added_at": {"lte": "2026-06-30"}}}}),
+    ("range_date_gt_rounds_up", {"size": 0, "query": {"range": {"added_at": {"gt": "2026-06-30"}}}}),
+    ("page_past_the_end", {"query": {"match_all": {}}, "size": 5, "from": 398}),
+    # the date array and the text array
+    ("reprinted_since_2000", {"size": 0, "query": {"range": {"reprinted_at": {"gte": "2000-01-01"}}}}),
+    ("reprinted_per_year", {"size": 0, "aggs": {"y": {"date_histogram": {"field": "reprinted_at", "calendar_interval": "year", "min_doc_count": 1}}}}),
+    ("exists_reprinted_unparseable_is_empty", {"size": 0, "query": {"exists": {"field": "reprinted_at"}}}),
+    ("reprint_values_and_distinct", {"size": 0, "aggs": {"n": {"value_count": {"field": "reprinted_at"}}, "d": {"cardinality": {"field": "reprinted_at"}}}}),
+    ("term_date_day_means_whole_day", {"size": 0, "query": {"term": {"added_at": "2026-03-15"}}}),
+    ("terms_date_days_mean_whole_days", {"size": 0, "query": {"terms": {"added_at": ["2026-03-15", "2026-03-16", "2025-11-02T10:00:00Z"]}}}),
+    ("match_notes_word", {"size": 0, "query": {"match": {"notes": "harbour"}}}),
+    ("match_phrase_notes_within_one_note", {"size": 0, "query": {"match_phrase": {"notes": "salt bread recipe"}}}),
+    ("match_phrase_notes_never_spans_two", {"size": 0, "query": {"match_phrase": {"notes": "evening the ending"}}}),
+    ("match_title_decomposed_accent", {"size": 0, "query": {"match": {"title": "cafe\u0301"}}}),
+    ("match_title_micro_sign_folds_to_mu", {"size": 0, "query": {"match": {"title": "5\u03bcs"}}}),
+    ("prefix_notes_token", {"size": 0, "query": {"prefix": {"notes": "lant"}}}),
     # Tokenizer divergences from Elasticsearch's standard analyzer, pinned to the profile's answer
     ("match_apostrophe_token", {"size": 0, "query": {"match": {"title": "doesn"}}}),
-    ("match_dotted_token", {"size": 0, "query": {"match": {"title": "v1"}}}),
+    ("match_dotted_token", {"size": 0, "query": {"match": {"title": "v2"}}}),
 ]
 
 ERRORS = [
-    ("err_wildcard", {"query": {"bool": {"filter": [{"term": {"state": "open"}}, {"wildcard": {"title": "fa*"}}]}}}, "query.bool.filter[1].wildcard"),
-    ("err_unknown_field", {"query": {"term": {"label": "bug"}}}, "query.term.label"),
-    ("err_quoted_number", {"query": {"range": {"comments": {"gte": "5"}}}}, "query.range.comments.gte"),
-    ("err_month_not_date", {"aggs": {"x": {"terms": {"field": "state"}}}, "query": {"range": {"created_at": {"gte": "2026-07"}}}}, "query.range.created_at.gte"),
-    ("err_terms_on_text", {"aggs": {"by": {"terms": {"field": "title"}}}}, "aggs.by.terms.field"),
-    ("err_not_elasticsearch", {"filters": [{"field": "state", "eq": "open"}]}, "$.filters"),
-    ("err_sub_aggregation", {"aggs": {"by": {"terms": {"field": "state"}, "aggs": {"c": {"avg": {"field": "comments"}}}}}}, "aggs.by.aggs"),
-    ("err_sort_array", {"sort": ["labels"]}, "sort[0].labels"),
-    ("err_match_on_keyword", {"query": {"match": {"state": "open"}}}, "query.match.state"),
+    ("err_wildcard", {"query": {"bool": {"filter": [{"term": {"format": "ebook"}}, {"wildcard": {"title": "har*"}}]}}}, "query.bool.filter[1].wildcard"),
+    ("err_unknown_field", {"query": {"term": {"autor": "Ada Quill"}}}, "query.term.autor"),
+    ("err_quoted_number", {"query": {"range": {"pages": {"gte": "500"}}}}, "query.range.pages.gte"),
+    ("err_month_not_date", {"aggs": {"x": {"terms": {"field": "format"}}}, "query": {"range": {"added_at": {"gte": "2026-07"}}}}, "query.range.added_at.gte"),
+    ("err_terms_on_text", {"aggs": {"by": {"terms": {"field": "summary"}}}}, "aggs.by.terms.field"),
+    ("err_not_elasticsearch", {"filters": [{"field": "format", "eq": "ebook"}]}, "$.filters"),
+    ("err_sub_aggregation", {"aggs": {"by": {"terms": {"field": "format"}, "aggs": {"c": {"avg": {"field": "price"}}}}}}, "aggs.by.aggs"),
+    ("err_sort_array", {"sort": ["tags"]}, "sort[0].tags"),
+    ("err_match_on_keyword", {"query": {"match": {"author": "Ada"}}}, "query.match.author"),
     ("err_size_too_big", {"size": 20000}, "size"),
+    ("err_result_window", {"size": 100, "from": 9950}, "from"),
+    # refused at run time, not at parse time: the path names the aggregation
+    ("err_histogram_too_many_buckets", {"size": 0, "aggs": {"h": {"histogram": {"field": "balance", "interval": 0.000001}}}}, "aggs.h"),
+    ("err_double_underscore_mapping_name_is_refused_elsewhere", {"query": {"term": {"a__b": 1}}}, "query.term.a__b"),
 ]
 
 

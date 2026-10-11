@@ -1,0 +1,14 @@
+{
+ "name": "match_title_micro_sign_folds_to_mu",
+ "request": {
+  "size": 0,
+  "query": {
+   "match": {
+    "title": "5μs"
+   }
+  }
+ },
+ "expect": {
+  "total": 1
+ }
+}

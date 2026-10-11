@@ -1,0 +1,14 @@
+{
+ "name": "term_tag_with_quote",
+ "request": {
+  "size": 0,
+  "query": {
+   "term": {
+    "tags": "quote\"d"
+   }
+  }
+ },
+ "expect": {
+  "total": 38
+ }
+}

@@ -1,0 +1,16 @@
+{
+ "name": "reprinted_since_2000",
+ "request": {
+  "size": 0,
+  "query": {
+   "range": {
+    "reprinted_at": {
+     "gte": "2000-01-01"
+    }
+   }
+  }
+ },
+ "expect": {
+  "total": 94
+ }
+}

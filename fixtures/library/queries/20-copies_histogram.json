@@ -1,0 +1,43 @@
+{
+ "name": "copies_histogram",
+ "request": {
+  "size": 0,
+  "aggs": {
+   "h": {
+    "histogram": {
+     "field": "copies",
+     "interval": 3
+    }
+   }
+  }
+ },
+ "expect": {
+  "total": 400,
+  "aggregations": {
+   "h": {
+    "buckets": [
+     {
+      "key": 0,
+      "doc_count": 99
+     },
+     {
+      "key": 3,
+      "doc_count": 82
+     },
+     {
+      "key": 6,
+      "doc_count": 87
+     },
+     {
+      "key": 9,
+      "doc_count": 95
+     },
+     {
+      "key": 12,
+      "doc_count": 37
+     }
+    ]
+   }
+  }
+ }
+}

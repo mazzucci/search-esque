@@ -433,18 +433,33 @@ pub fn predicate(q: &Query, m: &Mapping, params: &mut Vec<Param>) -> Result<Stri
             values,
         } => {
             let f = field(m, name)?;
-            let ps: Vec<Param> = values
-                .iter()
-                .map(|v| scalar_to_param(v, f.ty))
-                .filter(|p| *p != Param::Null)
-                .collect();
-            if ps.is_empty() {
+            let mut alts: Vec<String> = Vec::new();
+            for v in values {
+                match (f.ty, v) {
+                    // A date without a time part means the whole day, as for `term`.
+                    (FieldType::Date, Scalar::Str(s)) if s.len() == 10 => {
+                        if let (Some(lo), Some(hi)) = (parse_bound(s, false), parse_bound(s, true))
+                        {
+                            params.push(Param::Int(lo));
+                            params.push(Param::Int(hi));
+                            alts.push("(\u{1} >= ? AND \u{1} <= ?)".to_string());
+                        }
+                    }
+                    _ => {
+                        let p = scalar_to_param(v, f.ty);
+                        if p != Param::Null {
+                            params.push(p);
+                            alts.push("\u{1} = ?".to_string());
+                        }
+                    }
+                }
+            }
+            if alts.is_empty() {
                 return Ok("0".to_string());
             }
-            let marks = vec!["?"; ps.len()].join(", ");
-            params.extend(ps);
+            let joined = alts.join(" OR ");
             leaf(per_value(f, &cmp_col(name, f), |v| {
-                format!("{} IN ({})", v, marks)
+                joined.replace('\u{1}', v)
             }))
         }
         Query::Range {
@@ -659,18 +674,26 @@ fn compile_agg(a: &Agg, m: &Mapping) -> Result<CompiledAgg> {
             })
             .collect(),
         AggKind::Histogram { interval, .. } => {
-            // The quotient is computed once, under an alias, so the interval binds once and the
-            // floor expression can mention it three times.
-            vec![stmt(
-                format!(
-                    "SELECT {b} AS b, COUNT(DISTINCT id) FROM (SELECT d.{id} AS id, {v} / ? AS q {vf} WHERE {v} IS NOT NULL) GROUP BY b",
-                    b = floor("q"),
-                    id = id,
-                    v = value,
-                    vf = values_from
+            // First the bounds, so the executor can refuse a histogram that would overflow or
+            // exceed the bucket cap before bucketing; then the buckets. The quotient is computed
+            // once, under an alias, so the interval binds once and the floor expression can
+            // mention it three times.
+            vec![
+                stmt(
+                    format!("SELECT MIN({v}), MAX({v}) {vf}", v = value, vf = values_from),
+                    vec![],
                 ),
-                vec![Param::Real(*interval)],
-            )]
+                stmt(
+                    format!(
+                        "SELECT {b} AS b, COUNT(DISTINCT id) FROM (SELECT d.{id} AS id, {v} / ? AS q {vf} WHERE {v} IS NOT NULL) GROUP BY b",
+                        b = floor("q"),
+                        id = id,
+                        v = value,
+                        vf = values_from
+                    ),
+                    vec![Param::Real(*interval)],
+                ),
+            ]
         }
         AggKind::DateHistogram {
             calendar_interval, ..
@@ -710,7 +733,8 @@ fn compile_agg(a: &Agg, m: &Mapping) -> Result<CompiledAgg> {
         | AggKind::Sum { .. }
         | AggKind::Stats { .. } => vec![stmt(
             format!(
-                "SELECT COUNT({v}), CAST(MIN({v}) AS REAL), CAST(MAX({v}) AS REAL), TOTAL({v}) {vf}",
+                // Sums run on doubles, as Elasticsearch does for every numeric type, so the engines agree.
+                "SELECT COUNT({v}), CAST(MIN({v}) AS REAL), CAST(MAX({v}) AS REAL), TOTAL(CAST({v} AS REAL)) {vf}",
                 v = value,
                 vf = values_from
             ),

@@ -1,0 +1,13 @@
+{
+ "name": "err_double_underscore_mapping_name_is_refused_elsewhere",
+ "request": {
+  "query": {
+   "term": {
+    "a__b": 1
+   }
+  }
+ },
+ "expect": {
+  "error_path": "query.term.a__b"
+ }
+}

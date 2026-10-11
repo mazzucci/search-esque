@@ -1,0 +1,14 @@
+{
+ "name": "match_phrase_notes_never_spans_two",
+ "request": {
+  "size": 0,
+  "query": {
+   "match_phrase": {
+    "notes": "evening the ending"
+   }
+  }
+ },
+ "expect": {
+  "total": 0
+ }
+}

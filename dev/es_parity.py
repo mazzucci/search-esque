@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Parity against a real Elasticsearch.
 
-Loads fixtures/github-issues into a single-shard index on a local Elasticsearch, runs every
+Loads fixtures/library into a single-shard index on a local Elasticsearch, runs every
 answer fixture there and through `esque eval`, and compares totals, hit order, sources and
 aggregations. Standard library only.
 
@@ -34,13 +34,14 @@ from pathlib import Path
 ES = "http://127.0.0.1:9200"
 INDEX = "esque-parity"
 ROOT = Path(__file__).resolve().parent.parent
-FX = ROOT / "fixtures" / "github-issues"
+FX = ROOT / "fixtures" / "library"
 ESQUE = ROOT / "target" / "release" / "esque"
 
 DIVERGENT = {
     "term_case_insensitive": "term on a keyword ignores case in the profile; Elasticsearch is case-sensitive",
     "match_apostrophe_token": "FTS5 unicode61 splits doesn't into doesn + t; the standard analyzer keeps it whole",
-    "match_dotted_token": "FTS5 unicode61 splits v1.41.0 into v1 + 41 + 0; the standard analyzer keeps it whole",
+    "match_dotted_token": "FTS5 unicode61 splits v2.0 into v2 + 0; the standard analyzer keeps it whole",
+    "match_title_micro_sign_folds_to_mu": "FTS5 case-folds the micro sign to mu; the standard analyzer lower-cases only",
 }
 
 
@@ -63,7 +64,7 @@ def http(method, path, body=None, ndjson=None):
 
 def es_mapping(mapping):
     types = {"keyword": {"type": "keyword"}, "text": {"type": "text"}, "long": {"type": "long"},
-             "boolean": {"type": "boolean"}, "date": {"type": "date"}}
+             "double": {"type": "double"}, "boolean": {"type": "boolean"}, "date": {"type": "date", "ignore_malformed": True}}
     props = {name: dict(types[spec["type"]]) for name, spec in mapping["properties"].items()}
     props["id"] = {"type": "keyword"}
     return {"settings": {"number_of_shards": 1, "number_of_replicas": 0}, "mappings": {"properties": props}}

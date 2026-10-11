@@ -124,10 +124,21 @@ pub fn matches(q: &Query, doc: &Value, m: &Mapping) -> bool {
         }
         Query::Terms { field, values } => {
             let f = &m.fields[field];
-            let wanted: Vec<Key> = values.iter().filter_map(|v| scalar_key(v, f.ty)).collect();
-            keys(doc, field, f)
-                .iter()
-                .any(|k| wanted.iter().any(|w| eq_ignoring_case(k, w)))
+            let ks = keys(doc, field, f);
+            values.iter().any(|v| match (f.ty, v) {
+                // A date without a time part means the whole day, as for `term`.
+                (FieldType::Date, Scalar::Str(s)) if s.len() == 10 => {
+                    match (parse_bound(s, false), parse_bound(s, true)) {
+                        (Some(lo), Some(hi)) => ks.iter().any(
+                            |k| matches!(k, Key::Num(ms) if *ms >= lo as f64 && *ms <= hi as f64),
+                        ),
+                        _ => false,
+                    }
+                }
+                _ => {
+                    scalar_key(v, f.ty).is_some_and(|w| ks.iter().any(|k| eq_ignoring_case(k, &w)))
+                }
+            })
         }
         Query::Range {
             field,
@@ -266,6 +277,13 @@ fn aggregate(a: &AggKind, docs: &[&Value], m: &Mapping) -> Result<Value> {
             interval,
             min_doc_count,
         } => {
+            let values = nums(field);
+            if let (Some(lo), Some(hi)) = (
+                values.iter().cloned().reduce(f64::min),
+                values.iter().cloned().reduce(f64::max),
+            ) {
+                shape::histogram_bounds(lo, hi, *interval)?;
+            }
             let mut counts: BTreeMap<i64, u64> = BTreeMap::new();
             for d in docs {
                 let mut seen: Vec<i64> = keys(d, field, f)
@@ -390,7 +408,9 @@ pub fn evaluate(req: &Request, m: &Mapping, docs: &[Value]) -> Result<Value> {
     } else {
         let mut out = Map::new();
         for a in &req.aggs {
-            out.insert(a.name.clone(), aggregate(&a.kind, &matched, m)?);
+            let value =
+                aggregate(&a.kind, &matched, m).map_err(|e| e.at(format!("aggs.{}", a.name)))?;
+            out.insert(a.name.clone(), value);
         }
         Some(out)
     };
