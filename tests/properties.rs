@@ -10,9 +10,11 @@ use proptest::prelude::*;
 use search_esque::ast::*;
 use search_esque::dsl::{parse_request, to_elasticsearch};
 use search_esque::eval::evaluate;
+use search_esque::store::Store;
 use search_esque::Mapping;
 use serde_json::{json, Value};
 use std::path::Path;
+use std::sync::Mutex;
 use std::sync::OnceLock;
 
 const KEYWORDS: &[&str] = &[
@@ -442,4 +444,30 @@ fn the_known_good_numbers() {
         res["aggregations"]["s"]["buckets"],
         json!([{"key": "closed", "doc_count": 241}, {"key": "open", "doc_count": 95}])
     );
+}
+
+fn store() -> &'static Mutex<Store> {
+    static STORE: OnceLock<Mutex<Store>> = OnceLock::new();
+    STORE.get_or_init(|| {
+        let (mapping, docs) = corpus();
+        let s = Store::in_memory(mapping).unwrap();
+        s.load(docs).unwrap();
+        Mutex::new(s)
+    })
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 200, .. ProptestConfig::default() })]
+
+    /// The differential test: the SQLite executor must answer exactly as the reference evaluator
+    /// on every generated request, hits and aggregations alike.
+    #[test]
+    fn sqlite_agrees_with_the_evaluator(req in request()) {
+        let (mapping, docs) = corpus();
+        let evaluated = evaluate(&req, mapping, docs).unwrap();
+        let searched = store().lock().unwrap().search(&req).map_err(|e| TestCaseError::fail(e.to_string()))?;
+        prop_assert_eq!(&evaluated["hits"]["total"], &searched["hits"]["total"], "total\n{}", to_elasticsearch(&req));
+        prop_assert_eq!(&evaluated["hits"]["hits"], &searched["hits"]["hits"], "hits\n{}", to_elasticsearch(&req));
+        prop_assert_eq!(evaluated.get("aggregations"), searched.get("aggregations"), "aggregations\n{}", to_elasticsearch(&req));
+    }
 }

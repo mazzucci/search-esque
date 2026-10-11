@@ -88,10 +88,15 @@ impl Mapping {
         let mut fields = BTreeMap::new();
         for (name, spec) in props {
             let path = format!("$.properties.{}", name);
-            if name.is_empty() || name.starts_with('_') || name.contains('.') {
+            if name.is_empty()
+                || name.starts_with('_')
+                || !name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+            {
                 return Err(Error::new(
                     &path,
-                    "field names must not be empty, start with _ or contain a dot",
+                    "field names are letters, digits, _ and -, and do not start with _",
                 ));
             }
             let obj = spec

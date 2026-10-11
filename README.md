@@ -11,8 +11,9 @@ Why SQLite only: this is for light, local, throwaway data. The index is one file
 exact counts, and nothing you do here can hammer a shared database server with aggregation
 queries. A `.db` on a laptop, or in a browser tab, is the whole deployment.
 
-> Status: early. The profile, the AST, the reference evaluator and the Elasticsearch JSON
-> walker are in place and tested. The SQL compiler is next. Not published to crates.io yet.
+> Status: early. The profile, the Elasticsearch JSON walker, the reference evaluator, the SQL
+> compiler and the SQLite executor are in place and tested against each other and against a
+> real Elasticsearch. Next: the `query_string` grammar, then WebAssembly. Not on crates.io yet.
 
 ## What is accepted
 
@@ -68,16 +69,33 @@ but `text`.
 cargo build --release
 F=fixtures/github-issues
 
-target/release/esque eval --mapping $F/mapping.json --docs $F/docs.json '{
+# build a store from JSON records, then query it
+target/release/esque load --mapping $F/mapping.json --docs $F/docs.json --db issues.db
+target/release/esque search --db issues.db '{
   "query": {"bool": {"filter": [{"term": {"state": "open"}}, {"terms": {"labels": ["bug"]}}]}},
   "aggs": {"labels": {"terms": {"field": "labels", "size": 5}}},
   "sort": [{"comments": "desc"}], "size": 3
 }'
+
+# or see the SQL a request compiles to
+target/release/esque compile --mapping $F/mapping.json '{"query": {"term": {"state": "open"}}, "size": 0}'
 ```
 
-`esque parse` prints the AST and the canonical Elasticsearch form of a request, or the
-refusal. `esque mapping` validates a mapping. The evaluator runs over a JSON list of records;
-it is the reference, not the fast path.
+`esque compile` prints the statements and their bound parameters. `esque parse` prints the
+AST and the canonical Elasticsearch form of a request, or the refusal. `esque eval` runs the
+reference evaluator over a JSON list of records: the definition of the semantics, not the fast
+path. `esque mapping` validates a mapping.
+
+## How it works
+
+A request runs as one read transaction on one `docs` table. The matching ids are materialised
+once into a temp table; the total, the page of hits and every aggregation are computed from
+that set, so the filter runs once and hits and aggregations can never disagree. Keywords have
+a case-folded shadow column, dates an epoch-millisecond one, arrays are JSON queried through
+`json_each`, text goes through an FTS5 table with the `unicode61` tokenizer. Every value is a
+bound parameter; identifiers come only from the validated mapping. The compiler itself does no
+I/O: with `--no-default-features` the crate has no SQLite dependency and is ready for
+WebAssembly.
 
 ```
 {"error": {"path": "query.bool.filter[1].wildcard", "message": "'wildcard' is not supported",
@@ -89,12 +107,15 @@ it is the reference, not the fast path.
 - `fixtures/github-issues`: 336 real GitHub issues and pull requests (meilisearch/meilisearch,
   fetched 2026-10-10) with an Elasticsearch-style mapping, and 46 request fixtures whose
   expectations were computed by an independent Python oracle (`dev/python_oracle.py`).
+- Both engines, the evaluator and the SQLite store, answer every fixture, and are compared to
+  each other on the whole response: total, hits in order with `_source`, aggregations.
 - Property tests (`tests/properties.rs`): printing an AST to Elasticsearch JSON and parsing it
   back is the identity; a query and its `must_not` partition the corpus; a `terms`
   aggregation's counts add up to the records that have the field; pages have the right size
-  and distinct ids.
-- Next: the SQL compiler is held to the same fixtures and to the evaluator on generated
-  queries, then to a real single-shard Elasticsearch loaded with the same records.
+  and distinct ids; and the SQLite store answers exactly as the evaluator on 200 random
+  requests per run.
+- Parity with a real Elasticsearch 9.5.5 (`dev/es_parity.py`, single shard, same records), for
+  both engines, in CI as a required check.
 
 ## Layout
 
@@ -103,6 +124,9 @@ src/mapping.rs    fields, types, what each allows
 src/ast.rs        the typed request
 src/dsl.rs        Elasticsearch JSON -> AST (whitelist, path errors) and back
 src/eval.rs       the reference evaluator
+src/sql.rs        the schema and the statements a request compiles to (no I/O)
+src/store.rs      the SQLite executor (feature `sqlite`, on by default)
+src/shape.rs      Elasticsearch's response shape, shared by both engines
 src/timeutil.rs   ISO dates and calendar buckets without a dependency
 src/bin/esque.rs  the command line
 ```

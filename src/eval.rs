@@ -9,44 +9,15 @@
 //! A missing or null field is "empty"; an array field holds a list.
 
 use crate::ast::*;
-use crate::dsl::num_json;
 use crate::error::{Error, Result};
 use crate::mapping::{FieldType, Mapping};
-use crate::timeutil::{bucket_start, format_iso, next_bucket, parse_bound, parse_iso};
-use serde_json::{json, Map, Value};
+use crate::shape::{self, Metrics};
+use crate::timeutil::{bucket_start, parse_bound, parse_iso};
+use serde_json::{Map, Value};
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
-/// A comparable, hashable view of a field value. Ordered within a kind; kinds never mix for
-/// one field.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Key {
-    Bool(bool),
-    Num(f64),
-    Str(String),
-}
-
-impl Eq for Key {}
-
-impl PartialOrd for Key {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for Key {
-    fn cmp(&self, other: &Self) -> Ordering {
-        match (self, other) {
-            (Key::Bool(a), Key::Bool(b)) => a.cmp(b),
-            (Key::Num(a), Key::Num(b)) => a.partial_cmp(b).unwrap_or(Ordering::Equal),
-            (Key::Str(a), Key::Str(b)) => a.cmp(b),
-            (Key::Bool(_), _) => Ordering::Less,
-            (_, Key::Bool(_)) => Ordering::Greater,
-            (Key::Num(_), Key::Str(_)) => Ordering::Less,
-            (Key::Str(_), Key::Num(_)) => Ordering::Greater,
-        }
-    }
-}
+pub use crate::shape::Key;
 
 /// Lower-cased alphanumeric runs: the evaluator's stand-in for FTS5's `unicode61` tokenizer.
 pub fn tokens(s: &str) -> Vec<String> {
@@ -228,31 +199,25 @@ fn doc_id(doc: &Value) -> Result<String> {
     }
 }
 
-fn key_json(k: &Key) -> Value {
-    match k {
-        Key::Bool(b) => Value::Bool(*b),
-        Key::Num(n) => num_json(*n),
-        Key::Str(s) => Value::String(s.clone()),
-    }
-}
-
-/// Elasticsearch prints range bucket bounds as doubles: `1.0`, `5.0`.
-fn es_double(n: f64) -> String {
-    if n.fract() == 0.0 && n.abs() < 1.0e16 {
-        format!("{}.0", n as i64)
-    } else {
-        format!("{}", n)
-    }
-}
-
 fn sorted_dedup(mut v: Vec<Key>) -> Vec<Key> {
     v.sort();
     v.dedup();
     v
 }
 
+/// Counts for one aggregation over the matched records, shaped by `shape`, so the evaluator
+/// and the SQLite executor can only differ in the numbers.
 fn aggregate(a: &AggKind, docs: &[&Value], m: &Mapping) -> Value {
     let f = &m.fields[a.field()];
+    let nums = |field: &str| -> Vec<f64> {
+        docs.iter()
+            .flat_map(|d| keys(d, field, f.ty))
+            .filter_map(|k| match k {
+                Key::Num(v) => Some(v),
+                _ => None,
+            })
+            .collect()
+    };
     match a {
         AggKind::Terms { field, size, order } => {
             let mut counts: BTreeMap<Key, u64> = BTreeMap::new();
@@ -261,53 +226,11 @@ fn aggregate(a: &AggKind, docs: &[&Value], m: &Mapping) -> Value {
                     *counts.entry(k).or_insert(0) += 1;
                 }
             }
-            let mut buckets: Vec<(Key, u64)> = counts.into_iter().collect();
-            buckets.sort_by(|(ka, ca), (kb, cb)| match order {
-                TermsOrder::CountDesc => cb.cmp(ca).then_with(|| ka.cmp(kb)),
-                TermsOrder::CountAsc => ca.cmp(cb).then_with(|| ka.cmp(kb)),
-                TermsOrder::KeyAsc => ka.cmp(kb),
-                TermsOrder::KeyDesc => kb.cmp(ka),
-            });
-            let shown = buckets.len().min(*size);
-            let other: u64 = buckets[shown..].iter().map(|(_, c)| c).sum();
-            let out: Vec<Value> = buckets[..shown]
-                .iter()
-                .map(|(k, c)| {
-                    let mut b = Map::new();
-                    match (f.ty, k) {
-                        (FieldType::Boolean, Key::Bool(v)) => {
-                            b.insert("key".into(), json!(if *v { 1 } else { 0 }));
-                            b.insert("key_as_string".into(), json!(v.to_string()));
-                        }
-                        (FieldType::Date, Key::Num(ms)) => {
-                            b.insert("key".into(), json!(*ms as i64));
-                            b.insert("key_as_string".into(), json!(format_iso(*ms as i64)));
-                        }
-                        _ => {
-                            b.insert("key".into(), key_json(k));
-                        }
-                    }
-                    b.insert("doc_count".into(), json!(c));
-                    Value::Object(b)
-                })
-                .collect();
-            json!({"doc_count_error_upper_bound": 0, "sum_other_doc_count": other, "buckets": out})
+            shape::terms(counts.into_iter().collect(), *size, *order, f.ty)
         }
         AggKind::Range { field, ranges } => {
-            // Elasticsearch returns range buckets ordered by `from`, then `to`, open ends first
-            // and last respectively, whatever order the request gave them in.
-            let mut ordered: Vec<&RangeBucket> = ranges.iter().collect();
-            ordered.sort_by(|a, b| {
-                let key = |r: &RangeBucket| {
-                    (
-                        r.from.unwrap_or(f64::NEG_INFINITY),
-                        r.to.unwrap_or(f64::INFINITY),
-                    )
-                };
-                key(a).partial_cmp(&key(b)).unwrap_or(Ordering::Equal)
-            });
-            let out: Vec<Value> = ordered
-                .iter()
+            let buckets: Vec<(&RangeBucket, u64)> = shape::ordered_ranges(ranges)
+                .into_iter()
                 .map(|r| {
                     let n = docs
                         .iter()
@@ -321,26 +244,10 @@ fn aggregate(a: &AggKind, docs: &[&Value], m: &Mapping) -> Value {
                             })
                         })
                         .count();
-                    let mut b = Map::new();
-                    let key = r.key.clone().unwrap_or_else(|| {
-                        format!(
-                            "{}-{}",
-                            r.from.map_or("*".to_string(), es_double),
-                            r.to.map_or("*".to_string(), es_double)
-                        )
-                    });
-                    b.insert("key".into(), json!(key));
-                    if let Some(lo) = r.from {
-                        b.insert("from".into(), json!(lo));
-                    }
-                    if let Some(hi) = r.to {
-                        b.insert("to".into(), json!(hi));
-                    }
-                    b.insert("doc_count".into(), json!(n));
-                    Value::Object(b)
+                    (r, n as u64)
                 })
                 .collect();
-            json!({"buckets": out})
+            shape::range(&buckets)
         }
         AggKind::Histogram {
             field,
@@ -362,16 +269,7 @@ fn aggregate(a: &AggKind, docs: &[&Value], m: &Mapping) -> Value {
                     *counts.entry(b).or_insert(0) += 1;
                 }
             }
-            let mut out = Vec::new();
-            if let (Some(&lo), Some(&hi)) = (counts.keys().next(), counts.keys().next_back()) {
-                for b in lo..=hi {
-                    let c = counts.get(&b).copied().unwrap_or(0);
-                    if c >= *min_doc_count {
-                        out.push(json!({"key": num_json(b as f64 * interval), "doc_count": c}));
-                    }
-                }
-            }
-            json!({"buckets": out})
+            shape::histogram(&counts, *interval, *min_doc_count)
         }
         AggKind::DateHistogram {
             field,
@@ -393,61 +291,20 @@ fn aggregate(a: &AggKind, docs: &[&Value], m: &Mapping) -> Value {
                     *counts.entry(b).or_insert(0) += 1;
                 }
             }
-            let mut out = Vec::new();
-            if let (Some(&lo), Some(&hi)) = (counts.keys().next(), counts.keys().next_back()) {
-                let mut b = lo;
-                while b <= hi {
-                    let c = counts.get(&b).copied().unwrap_or(0);
-                    if c >= *min_doc_count {
-                        out.push(json!({"key_as_string": format_iso(b), "key": b, "doc_count": c}));
-                    }
-                    b = next_bucket(b, *calendar_interval);
-                }
-            }
-            json!({"buckets": out})
+            shape::date_histogram(&counts, *calendar_interval, *min_doc_count)
         }
         AggKind::ValueCount { field } => {
-            let n: usize = docs.iter().map(|d| keys(d, field, f.ty).len()).sum();
-            json!({"value": n})
+            shape::single_value(docs.iter().map(|d| keys(d, field, f.ty).len()).sum())
         }
         AggKind::Cardinality { field } => {
             let all: Vec<Key> = docs.iter().flat_map(|d| keys(d, field, f.ty)).collect();
-            json!({"value": sorted_dedup(all).len()})
+            shape::single_value(sorted_dedup(all).len())
         }
         AggKind::Avg { field }
         | AggKind::Min { field }
         | AggKind::Max { field }
         | AggKind::Sum { field }
-        | AggKind::Stats { field } => {
-            let nums: Vec<f64> = docs
-                .iter()
-                .flat_map(|d| keys(d, field, f.ty))
-                .filter_map(|k| match k {
-                    Key::Num(v) => Some(v),
-                    _ => None,
-                })
-                .collect();
-            let count = nums.len();
-            let sum: f64 = nums.iter().sum();
-            let min = nums.iter().cloned().fold(None, |acc: Option<f64>, v| {
-                Some(acc.map_or(v, |a| a.min(v)))
-            });
-            let max = nums.iter().cloned().fold(None, |acc: Option<f64>, v| {
-                Some(acc.map_or(v, |a| a.max(v)))
-            });
-            let avg = if count > 0 {
-                Some(sum / count as f64)
-            } else {
-                None
-            };
-            match a {
-                AggKind::Avg { .. } => json!({"value": avg}),
-                AggKind::Min { .. } => json!({"value": min}),
-                AggKind::Max { .. } => json!({"value": max}),
-                AggKind::Sum { .. } => json!({"value": sum}),
-                _ => json!({"count": count, "min": min, "max": max, "avg": avg, "sum": sum}),
-            }
-        }
+        | AggKind::Stats { field } => shape::metric(a, Metrics::from_values(&nums(field))),
     }
 }
 
@@ -525,29 +382,19 @@ pub fn evaluate(req: &Request, m: &Mapping, docs: &[Value]) -> Result<Value> {
         .iter()
         .skip(req.from)
         .take(req.size)
-        .map(|d| {
-            let mut h = Map::new();
-            h.insert("_id".into(), json!(doc_id(d).unwrap_or_default()));
-            h.insert("_score".into(), Value::Null);
-            if let Some(src) = source_of(d, &req.source) {
-                h.insert("_source".into(), src);
-            }
-            Value::Object(h)
-        })
+        .map(|d| shape::hit(&doc_id(d).unwrap_or_default(), source_of(d, &req.source)))
         .collect();
-    let mut out = Map::new();
-    out.insert("took".into(), json!(0));
-    out.insert("timed_out".into(), json!(false));
-    out.insert("hits".into(), json!({"total": {"value": total, "relation": "eq"}, "max_score": Value::Null, "hits": page}));
-    if !req.aggs.is_empty() {
-        let aggs: Map<String, Value> = req
-            .aggs
-            .iter()
-            .map(|a| (a.name.clone(), aggregate(&a.kind, &matched, m)))
-            .collect();
-        out.insert("aggregations".into(), Value::Object(aggs));
-    }
-    Ok(Value::Object(out))
+    let aggregations = if req.aggs.is_empty() {
+        None
+    } else {
+        Some(
+            req.aggs
+                .iter()
+                .map(|a| (a.name.clone(), aggregate(&a.kind, &matched, m)))
+                .collect::<Map<String, Value>>(),
+        )
+    };
+    Ok(shape::response(total, page, aggregations))
 }
 
 #[cfg(test)]
@@ -560,11 +407,5 @@ mod tests {
             tokens("Facet-counts, v1.2 (Chat)"),
             vec!["facet", "counts", "v1", "2", "chat"]
         );
-    }
-
-    #[test]
-    fn es_doubles() {
-        assert_eq!(es_double(1.0), "1.0");
-        assert_eq!(es_double(2.5), "2.5");
     }
 }
