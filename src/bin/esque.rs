@@ -12,7 +12,7 @@
 //!       runs the request on the store
 //!   esque mapping M.json
 //!       validates a mapping and prints its canonical form
-//!   esque tokens "some text"
+//!   esque tokens "some text"        (or `-` to read the text from standard input)
 //!       the tokens the profile splits a text into (FTS5 unicode61 rules)
 //!   esque fts-tokens "some text"
 //!       the distinct tokens the store's own FTS5 produces, to check the two agree
@@ -109,6 +109,19 @@ fn request_of(a: &Args) -> Result<Value, Error> {
     }
 }
 
+/// The text for `tokens` and `fts-tokens`: the argument, or standard input when it is `-` or
+/// absent, since a command line cannot carry a megabyte on every platform.
+fn text_arg(a: &Args) -> String {
+    match a.positional.first().map(String::as_str) {
+        Some("-") | None => {
+            let mut s = String::new();
+            std::io::Read::read_to_string(&mut std::io::stdin(), &mut s).unwrap_or(0);
+            s
+        }
+        Some(t) => t.to_string(),
+    }
+}
+
 fn mapping_of(a: &Args) -> Result<Mapping, Error> {
     let path = a.mapping.clone().unwrap_or_else(|| usage());
     read_json(&path, "mapping").and_then(|v| Mapping::from_json(&v))
@@ -158,14 +171,12 @@ fn main() {
                 store.search(&req)
             })
         }
-        "tokens" => Ok(serde_json::to_value(search_esque::tokenize::tokens(
-            a.positional.first().unwrap_or_else(|| usage()),
-        ))
-        .unwrap()),
+        "tokens" => {
+            Ok(serde_json::to_value(search_esque::tokenize::tokens(&text_arg(&a))).unwrap())
+        }
         #[cfg(feature = "sqlite")]
         "fts-tokens" => {
-            search_esque::store::fts_tokens(a.positional.first().unwrap_or_else(|| usage()))
-                .map(|t| serde_json::to_value(t).unwrap())
+            search_esque::store::fts_tokens(&text_arg(&a)).map(|t| serde_json::to_value(t).unwrap())
         }
         _ => usage(),
     };

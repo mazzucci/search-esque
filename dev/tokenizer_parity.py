@@ -29,7 +29,7 @@ AWKWARD = [
 def fts5_tokens(con, text):
     """The store's own SQLite (bundled into esque) decides; Python's sqlite3 is only a fallback."""
     if con is None:
-        p = subprocess.run([str(ESQUE), "fts-tokens", text], capture_output=True, text=True)
+        p = subprocess.run([str(ESQUE), "fts-tokens", "-"], input=text, capture_output=True, text=True)
         return json.loads(p.stdout)
     con.execute("DELETE FROM t")
     con.execute("INSERT INTO t VALUES (?)", (text,))
@@ -39,7 +39,7 @@ def fts5_tokens(con, text):
 def esque_tokens(texts):
     out = []
     for text in texts:
-        p = subprocess.run([str(ESQUE), "tokens", text], capture_output=True, text=True)
+        p = subprocess.run([str(ESQUE), "tokens", "-"], input=text, capture_output=True, text=True)
         out.append(sorted(set(json.loads(p.stdout))))
     return out
 
@@ -52,8 +52,9 @@ def every_code_point():
     for i in range(0, len(cps), 30000):
         chunk = cps[i:i + 30000]
         text = " ".join("q%06xz%sz" % (cp, chr(cp)) for cp in chunk)
-        mine = set(json.loads(subprocess.run([str(ESQUE), "tokens", text], capture_output=True, text=True).stdout))
-        theirs = set(json.loads(subprocess.run([str(ESQUE), "fts-tokens", text], capture_output=True, text=True).stdout))
+        # the text goes through standard input: a command line cannot carry a megabyte on Linux
+        mine = set(json.loads(subprocess.run([str(ESQUE), "tokens", "-"], input=text, capture_output=True, text=True).stdout))
+        theirs = set(json.loads(subprocess.run([str(ESQUE), "fts-tokens", "-"], input=text, capture_output=True, text=True).stdout))
         for term in mine ^ theirs:
             if term.startswith("q") and len(term) >= 7:
                 try:
