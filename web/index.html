@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>search-esque playground</title>
+  <meta name="description" content="Paste an Elasticsearch search request, see the SQLite statements it compiles to, run it on a demo store in your browser.">
+  <link rel="stylesheet" href="./style.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%226%22 fill=%22%231a5fb4%22/%3E%3Ctext x=%2216%22 y=%2222%22 font-size=%2218%22 font-family=%22monospace%22 fill=%22white%22 text-anchor=%22middle%22%3E%7B%7D%3C/text%3E%3C/svg%3E">
+</head>
+<body>
+  <header>
+    <h1>search-esque <span class="muted">playground</span></h1>
+    <p class="tagline">Elasticsearch-compatible query DSL and aggregations over SQLite. Paste a request on the left; the SQL it compiles to appears on the right. Nothing leaves your browser.</p>
+    <p class="links"><a href="https://github.com/mazzucci/search-esque">Source</a> · <span id="status" class="muted">loading…</span></p>
+  </header>
+
+  <main>
+    <section class="pane left">
+      <div class="toolbar">
+        <label for="examples">Example</label>
+        <select id="examples"></select>
+        <button id="run" type="button" disabled title="Runs the compiled statements on the demo store, in this browser">Run on demo store</button>
+      </div>
+      <textarea id="request" spellcheck="false" aria-label="Elasticsearch search request"></textarea>
+      <details id="mapping">
+        <summary>The demo mapping: an invented library catalogue, 400 records</summary>
+        <div id="fields" class="fields"></div>
+      </details>
+    </section>
+
+    <section class="pane right">
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-tab="sql" role="tab">SQL</button>
+        <button class="tab" data-tab="result" role="tab">Result</button>
+        <button class="tab" data-tab="ast" role="tab">AST</button>
+        <button class="tab" data-tab="canonical" role="tab">Canonical request</button>
+      </div>
+      <div id="error" class="error" hidden></div>
+      <div id="panel-sql" class="panel active"></div>
+      <div id="panel-result" class="panel"><p class="muted">Press <b>Run on demo store</b> to execute the statements with SQLite compiled to WebAssembly and see the Elasticsearch-shaped response.</p></div>
+      <pre id="panel-ast" class="panel code"></pre>
+      <pre id="panel-canonical" class="panel code"></pre>
+    </section>
+  </main>
+
+  <footer class="muted">
+    The compiler and the executor are the Rust crate compiled to WebAssembly; SQLite is the <a href="https://sqlite.org/wasm">official SQLite WebAssembly build</a>. Translation never needs the database: you decide where, and whether, to run the SQL.
+  </footer>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

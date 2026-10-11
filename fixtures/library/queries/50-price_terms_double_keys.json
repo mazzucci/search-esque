@@ -1,0 +1,45 @@
+{
+ "name": "price_terms_double_keys",
+ "request": {
+  "size": 0,
+  "aggs": {
+   "p": {
+    "terms": {
+     "field": "price",
+     "size": 5
+    }
+   }
+  }
+ },
+ "expect": {
+  "total": 400,
+  "aggregations": {
+   "p": {
+    "doc_count_error_upper_bound": 0,
+    "sum_other_doc_count": 364,
+    "buckets": [
+     {
+      "key": 38,
+      "doc_count": 3
+     },
+     {
+      "key": 47,
+      "doc_count": 3
+     },
+     {
+      "key": 9,
+      "doc_count": 2
+     },
+     {
+      "key": 17.82,
+      "doc_count": 2
+     },
+     {
+      "key": 19,
+      "doc_count": 2
+     }
+    ]
+   }
+  }
+ }
+}

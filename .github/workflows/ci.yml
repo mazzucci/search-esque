@@ -14,11 +14,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
       - run: cargo build --no-default-features
+      - run: cargo build --no-default-features --features wasm --target wasm32-unknown-unknown
 
   parity:
     name: parity with elasticsearch
@@ -41,8 +43,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release
+      - name: The WebAssembly path answers like the native store
+        run: |
+          curl -sSL https://github.com/rustwasm/wasm-pack/releases/download/v0.15.0/wasm-pack-v0.15.0-x86_64-unknown-linux-musl.tar.gz | tar xz
+          sudo mv wasm-pack-v0.15.0-x86_64-unknown-linux-musl/wasm-pack /usr/local/bin/
+          wasm-pack build --release --target web --out-dir web/pkg -- --no-default-features --features wasm
+          sh dev/vendor_sqlite.sh
+          mkdir -p web/demo
+          target/release/esque load --mapping fixtures/library/mapping.json --docs fixtures/library/docs.json --db web/demo/library.db
+          cp fixtures/library/mapping.json web/demo/mapping.json
+          node dev/wasm_parity.mjs
       - run: python3 dev/tokenizer_parity.py
       - run: python3 dev/tokenizer_parity.py --all
       - run: python3 dev/es_parity.py

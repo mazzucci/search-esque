@@ -1,0 +1,16 @@
+{
+ "name": "range_date_lte_rounds_up",
+ "request": {
+  "size": 0,
+  "query": {
+   "range": {
+    "added_at": {
+     "lte": "2026-06-30"
+    }
+   }
+  }
+ },
+ "expect": {
+  "total": 358
+ }
+}

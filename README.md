@@ -13,7 +13,33 @@ queries. A `.db` on a laptop, or in a browser tab, is the whole deployment.
 
 > Status: early. The profile, the Elasticsearch JSON walker, the reference evaluator, the SQL
 > compiler and the SQLite executor are in place and tested against each other and against a
-> real Elasticsearch. Next: the `query_string` grammar, then WebAssembly. Not on crates.io yet.
+> real Elasticsearch, and the whole thing runs in the browser as a playground. Next: the
+> `query_string` grammar. Not on crates.io yet.
+
+## Try it in the browser
+
+The playground at [mazzucci.github.io/search-esque](https://mazzucci.github.io/search-esque/)
+takes an Elasticsearch request on the left and shows the SQLite statements it compiles to on
+the right, with their bound parameters, or the refusal with its path and hint. **Run on demo
+store** executes them on a 400-record demo catalogue with SQLite compiled to WebAssembly, in
+the tab, through the crate's own executor; nothing leaves the browser. Translation never needs
+the database: you decide where, and whether, to run the SQL.
+
+![The playground: an Elasticsearch request on the left compiles to SQLite statements with bound parameters on the right; Run on demo store answers with the total, the hits and a genres bucket table; editing a value in the request changes the bound parameter as it is typed, and running again changes the counts; an aggregation-only request answers with buckets per format and per year, drawn as bars; a request with a wildcard clause is refused at query.bool.filter[1].wildcard, with the list of what is supported](media/playground.gif)
+
+<sub>Everything in the recording is the real page, the compiler and SQLite running in the browser; only the hands are scripted (`dev/record_demo.mjs`, assembled by `dev/make_gif.py`).</sub>
+
+To build it yourself: `rustup target add wasm32-unknown-unknown`, install
+[wasm-pack](https://rustwasm.github.io/wasm-pack/), then
+
+```bash
+wasm-pack build --release --target web --out-dir web/pkg -- --no-default-features --features wasm
+sh dev/vendor_sqlite.sh                                   # the official SQLite WebAssembly build
+cargo build --release && mkdir -p web/demo
+target/release/esque load --mapping fixtures/library/mapping.json --docs fixtures/library/docs.json --db web/demo/library.db
+cp fixtures/library/mapping.json web/demo/
+python3 -m http.server 8765 --directory web              # then open http://127.0.0.1:8765/
+```
 
 ## What is accepted
 
@@ -46,6 +72,8 @@ Deliberate differences from Elasticsearch, each held by a test:
   cuts a single token at 32 KB where the evaluator does not.
 - A value that does not fit its field's type is empty: `exists` is false for it and it matches
   nothing. Elasticsearch would have refused the record at indexing time.
+- Numbers are one type, compared as doubles: a range bound beyond a long's range is a valid
+  bound here, where Elasticsearch refuses it for a `long` field.
 
 Checked against a real Elasticsearch 9.5.5 (`dev/es_parity.py`, single shard, same records):
 every fixture matches, including date-only range bounds rounding up for `gt` and `lte`, range
@@ -115,7 +143,7 @@ WebAssembly.
   (`dev/make_corpus.py`, seeded, nothing taken from any real dataset), designed to hold what
   breaks compilers: case variants, awkward characters in keywords, empty and duplicate array
   values, a date array and a text array, whole-number floats, negatives, nulls in every type,
-  dates before 1970, decomposed accents. With it, an Elasticsearch-style mapping and 78 request
+  dates before 1970, decomposed accents. With it, an Elasticsearch-style mapping and 80 request
   fixtures whose expectations were computed by an independent Python oracle
   (`dev/python_oracle.py`) and pinned to a real Elasticsearch.
 - Both engines, the evaluator and the SQLite store, answer every fixture, and are compared to
@@ -136,7 +164,11 @@ src/ast.rs        the typed request
 src/dsl.rs        Elasticsearch JSON -> AST (whitelist, path errors) and back
 src/eval.rs       the reference evaluator
 src/sql.rs        the schema and the statements a request compiles to (no I/O)
-src/store.rs      the SQLite executor (feature `sqlite`, on by default)
+src/exec.rs       running a compiled request on any SQLite, through a small driver trait (no I/O)
+src/store.rs      the rusqlite driver and the store file (feature `sqlite`, on by default)
+src/wasm.rs       the same functions for a page, SQLite driven from JavaScript (feature `wasm`)
+web/              the playground page; `pkg/`, `vendor/` and `demo/` are built, not committed
+media/            the README's recording of the playground (`dev/record_demo.mjs`, `dev/make_gif.py`)
 src/shape.rs      Elasticsearch's response shape, shared by both engines
 src/timeutil.rs   ISO dates and calendar buckets without a dependency
 src/bin/esque.rs  the command line

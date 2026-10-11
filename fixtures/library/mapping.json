@@ -38,6 +38,9 @@
   "balance": {
    "type": "double"
   },
+  "stock_delta": {
+   "type": "long"
+  },
   "copies": {
    "type": "long"
   },

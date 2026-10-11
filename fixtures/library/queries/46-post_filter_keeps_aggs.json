@@ -1,0 +1,45 @@
+{
+ "name": "post_filter_keeps_aggs",
+ "request": {
+  "size": 0,
+  "aggs": {
+   "by_format": {
+    "terms": {
+     "field": "format"
+    }
+   }
+  },
+  "post_filter": {
+   "term": {
+    "format": "ebook"
+   }
+  }
+ },
+ "expect": {
+  "total": 92,
+  "aggregations": {
+   "by_format": {
+    "doc_count_error_upper_bound": 0,
+    "sum_other_doc_count": 0,
+    "buckets": [
+     {
+      "key": "paperback",
+      "doc_count": 152
+     },
+     {
+      "key": "ebook",
+      "doc_count": 92
+     },
+     {
+      "key": "audiobook",
+      "doc_count": 84
+     },
+     {
+      "key": "hardcover",
+      "doc_count": 72
+     }
+    ]
+   }
+  }
+ }
+}

@@ -1,0 +1,14 @@
+{
+ "name": "prefix_tag_underscore_is_literal",
+ "request": {
+  "size": 0,
+  "query": {
+   "prefix": {
+    "tags": "50%_o"
+   }
+  }
+ },
+ "expect": {
+  "total": 42
+ }
+}

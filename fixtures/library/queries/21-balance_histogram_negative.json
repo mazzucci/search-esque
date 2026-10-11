@@ -18,15 +18,15 @@
     "buckets": [
      {
       "key": -40,
-      "doc_count": 69
+      "doc_count": 96
      },
      {
       "key": -20,
-      "doc_count": 79
+      "doc_count": 73
      },
      {
       "key": 0,
-      "doc_count": 93
+      "doc_count": 80
      },
      {
       "key": 20,
@@ -34,7 +34,7 @@
      },
      {
       "key": 40,
-      "doc_count": 87
+      "doc_count": 79
      },
      {
       "key": 60,

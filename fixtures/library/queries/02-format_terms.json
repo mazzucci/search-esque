@@ -19,19 +19,19 @@
     "buckets": [
      {
       "key": "paperback",
-      "doc_count": 162
-     },
-     {
-      "key": "audiobook",
-      "doc_count": 90
-     },
-     {
-      "key": "hardcover",
-      "doc_count": 77
+      "doc_count": 152
      },
      {
       "key": "ebook",
-      "doc_count": 71
+      "doc_count": 92
+     },
+     {
+      "key": "audiobook",
+      "doc_count": 84
+     },
+     {
+      "key": "hardcover",
+      "doc_count": 72
      }
     ]
    }

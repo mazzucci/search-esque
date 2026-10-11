@@ -1,0 +1,29 @@
+{
+ "name": "range_with_huge_bounds",
+ "request": {
+  "size": 0,
+  "query": {
+   "bool": {
+    "filter": [
+     {
+      "range": {
+       "pages": {
+        "lte": 9e+18
+       }
+      }
+     },
+     {
+      "range": {
+       "balance": {
+        "gte": -1e+300
+       }
+      }
+     }
+    ]
+   }
+  }
+ },
+ "expect": {
+  "total": 369
+ }
+}

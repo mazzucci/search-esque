@@ -1,0 +1,14 @@
+{
+ "name": "term_tag_with_backslash",
+ "request": {
+  "size": 0,
+  "query": {
+   "term": {
+    "tags": "back\\slash"
+   }
+  }
+ },
+ "expect": {
+  "total": 41
+ }
+}

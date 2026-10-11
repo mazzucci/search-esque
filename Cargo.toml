@@ -12,6 +12,7 @@ categories = ["database", "parser-implementations"]
 [lib]
 name = "search_esque"
 path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
 
 [[bin]]
 name = "esque"
@@ -21,11 +22,15 @@ path = "src/bin/esque.rs"
 default = ["sqlite"]
 # The executor. Off, the crate is pure and compiles to WebAssembly.
 sqlite = ["dep:rusqlite"]
+# The browser surface: wasm-bindgen exports, SQLite driven through a JavaScript callback.
+wasm = ["dep:wasm-bindgen", "dep:js-sys"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 rusqlite = { version = "0.40.2", features = ["bundled"], optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
+js-sys = { version = "0.3", optional = true }
 
 [dev-dependencies]
 proptest = "1"

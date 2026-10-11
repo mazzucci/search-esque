@@ -371,6 +371,10 @@ FIXTURES = [
     ("exists_genres_empty_is_missing", {"size": 0, "query": {"exists": {"field": "genres"}}}),
     ("copies_histogram", {"size": 0, "aggs": {"h": {"histogram": {"field": "copies", "interval": 3}}}}),
     ("balance_histogram_negative", {"size": 0, "aggs": {"h": {"histogram": {"field": "balance", "interval": 20}}}}),
+    ("stock_delta_histogram_negative_integers", {"size": 0, "aggs": {"h": {"histogram": {"field": "stock_delta", "interval": 10}}}}),
+    # 9e18 fits a long (Elasticsearch refuses bounds outside the field's numeric type; the profile compares as doubles),
+    # and -1e300 wraps if a driver binds it as an integer
+    ("range_with_huge_bounds", {"size": 0, "query": {"bool": {"filter": [{"range": {"pages": {"lte": 9e18}}}, {"range": {"balance": {"gte": -1e300}}}]}}}),
     ("price_ranges", {"size": 0, "aggs": {"r": {"range": {"field": "price", "ranges": [{"to": 10}, {"from": 10, "to": 30}, {"from": 30, "key": "pricey"}]}}}}),
     ("range_agg_ordered_by_from", {"size": 0, "aggs": {"r": {"range": {"field": "balance", "ranges": [{"from": 0, "to": 20}, {"from": 20}, {"to": 0}]}}}}),
     ("should_fr_or_de", {"size": 0, "query": {"bool": {"should": [{"term": {"language": "fr"}}, {"term": {"language": "de"}}]}}}),

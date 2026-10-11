@@ -1,0 +1,48 @@
+{
+ "name": "publisher_terms_keep_case_variants_apart",
+ "request": {
+  "size": 0,
+  "aggs": {
+   "p": {
+    "terms": {
+     "field": "publisher"
+    }
+   }
+  }
+ },
+ "expect": {
+  "total": 400,
+  "aggregations": {
+   "p": {
+    "doc_count_error_upper_bound": 0,
+    "sum_other_doc_count": 0,
+    "buckets": [
+     {
+      "key": "Harbourline",
+      "doc_count": 74
+     },
+     {
+      "key": "Quill & Ember",
+      "doc_count": 68
+     },
+     {
+      "key": "Nordlys Press",
+      "doc_count": 66
+     },
+     {
+      "key": "nordlys press",
+      "doc_count": 66
+     },
+     {
+      "key": "Tessellate Books",
+      "doc_count": 65
+     },
+     {
+      "key": "Meridian House",
+      "doc_count": 61
+     }
+    ]
+   }
+  }
+ }
+}

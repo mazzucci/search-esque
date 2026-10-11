@@ -17,64 +17,64 @@
   }
  },
  "expect": {
-  "total": 71,
+  "total": 92,
   "aggregations": {
    "per_month": {
     "buckets": [
      {
       "key_as_string": "2024-01-01T00:00:00.000Z",
       "key": 1704067200000,
-      "doc_count": 2
+      "doc_count": 1
      },
      {
       "key_as_string": "2024-02-01T00:00:00.000Z",
       "key": 1706745600000,
-      "doc_count": 1
+      "doc_count": 0
      },
      {
       "key_as_string": "2024-03-01T00:00:00.000Z",
       "key": 1709251200000,
-      "doc_count": 4
+      "doc_count": 3
      },
      {
       "key_as_string": "2024-04-01T00:00:00.000Z",
       "key": 1711929600000,
-      "doc_count": 1
+      "doc_count": 2
      },
      {
       "key_as_string": "2024-05-01T00:00:00.000Z",
       "key": 1714521600000,
-      "doc_count": 1
+      "doc_count": 4
      },
      {
       "key_as_string": "2024-06-01T00:00:00.000Z",
       "key": 1717200000000,
-      "doc_count": 3
+      "doc_count": 2
      },
      {
       "key_as_string": "2024-07-01T00:00:00.000Z",
       "key": 1719792000000,
-      "doc_count": 2
+      "doc_count": 4
      },
      {
       "key_as_string": "2024-08-01T00:00:00.000Z",
       "key": 1722470400000,
-      "doc_count": 2
+      "doc_count": 5
      },
      {
       "key_as_string": "2024-09-01T00:00:00.000Z",
       "key": 1725148800000,
-      "doc_count": 3
+      "doc_count": 4
      },
      {
       "key_as_string": "2024-10-01T00:00:00.000Z",
       "key": 1727740800000,
-      "doc_count": 2
+      "doc_count": 5
      },
      {
       "key_as_string": "2024-11-01T00:00:00.000Z",
       "key": 1730419200000,
-      "doc_count": 1
+      "doc_count": 3
      },
      {
       "key_as_string": "2024-12-01T00:00:00.000Z",
@@ -84,57 +84,57 @@
      {
       "key_as_string": "2025-01-01T00:00:00.000Z",
       "key": 1735689600000,
-      "doc_count": 3
+      "doc_count": 5
      },
      {
       "key_as_string": "2025-02-01T00:00:00.000Z",
       "key": 1738368000000,
-      "doc_count": 4
+      "doc_count": 0
      },
      {
       "key_as_string": "2025-03-01T00:00:00.000Z",
       "key": 1740787200000,
-      "doc_count": 2
+      "doc_count": 1
      },
      {
       "key_as_string": "2025-04-01T00:00:00.000Z",
       "key": 1743465600000,
-      "doc_count": 1
+      "doc_count": 2
      },
      {
       "key_as_string": "2025-05-01T00:00:00.000Z",
       "key": 1746057600000,
-      "doc_count": 1
+      "doc_count": 2
      },
      {
       "key_as_string": "2025-06-01T00:00:00.000Z",
       "key": 1748736000000,
-      "doc_count": 2
+      "doc_count": 1
      },
      {
       "key_as_string": "2025-07-01T00:00:00.000Z",
       "key": 1751328000000,
-      "doc_count": 5
+      "doc_count": 3
      },
      {
       "key_as_string": "2025-08-01T00:00:00.000Z",
       "key": 1754006400000,
-      "doc_count": 1
+      "doc_count": 5
      },
      {
       "key_as_string": "2025-09-01T00:00:00.000Z",
       "key": 1756684800000,
-      "doc_count": 2
+      "doc_count": 5
      },
      {
       "key_as_string": "2025-10-01T00:00:00.000Z",
       "key": 1759276800000,
-      "doc_count": 3
+      "doc_count": 5
      },
      {
       "key_as_string": "2025-11-01T00:00:00.000Z",
       "key": 1761955200000,
-      "doc_count": 2
+      "doc_count": 0
      },
      {
       "key_as_string": "2025-12-01T00:00:00.000Z",
@@ -149,27 +149,27 @@
      {
       "key_as_string": "2026-02-01T00:00:00.000Z",
       "key": 1769904000000,
-      "doc_count": 0
+      "doc_count": 4
      },
      {
       "key_as_string": "2026-03-01T00:00:00.000Z",
       "key": 1772323200000,
-      "doc_count": 1
+      "doc_count": 3
      },
      {
       "key_as_string": "2026-04-01T00:00:00.000Z",
       "key": 1775001600000,
-      "doc_count": 3
+      "doc_count": 2
      },
      {
       "key_as_string": "2026-05-01T00:00:00.000Z",
       "key": 1777593600000,
-      "doc_count": 1
+      "doc_count": 2
      },
      {
       "key_as_string": "2026-06-01T00:00:00.000Z",
       "key": 1780272000000,
-      "doc_count": 2
+      "doc_count": 3
      },
      {
       "key_as_string": "2026-07-01T00:00:00.000Z",
@@ -179,16 +179,11 @@
      {
       "key_as_string": "2026-08-01T00:00:00.000Z",
       "key": 1785542400000,
-      "doc_count": 1
+      "doc_count": 4
      },
      {
       "key_as_string": "2026-09-01T00:00:00.000Z",
       "key": 1788220800000,
-      "doc_count": 3
-     },
-     {
-      "key_as_string": "2026-10-01T00:00:00.000Z",
-      "key": 1790812800000,
       "doc_count": 1
      }
     ]

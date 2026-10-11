@@ -1,0 +1,21 @@
+{
+ "name": "msm_zero_should_only_needs_one",
+ "request": {
+  "size": 0,
+  "query": {
+   "bool": {
+    "should": [
+     {
+      "term": {
+       "language": "fr"
+      }
+     }
+    ],
+    "minimum_should_match": 0
+   }
+  }
+ },
+ "expect": {
+  "total": 52
+ }
+}

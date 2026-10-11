@@ -115,6 +115,7 @@ def make_doc(i: int) -> dict:
         "price": price,
         "rating": rating,
         "balance": round(rng.uniform(-40.0, 60.0), 2),      # negative numbers for histograms
+        "stock_delta": rng.randrange(-25, 26),               # negative whole numbers: integer division would floor them wrongly
         "copies": rng.randrange(0, 13),
         "available": None if i % 11 == 0 else rng.random() < 0.7,
         "published_at": published,
@@ -140,6 +141,7 @@ MAPPING = {"properties": {
     "price": {"type": "double"},
     "rating": {"type": "double"},
     "balance": {"type": "double"},
+    "stock_delta": {"type": "long"},
     "copies": {"type": "long"},
     "available": {"type": "boolean"},
     "published_at": {"type": "date"},

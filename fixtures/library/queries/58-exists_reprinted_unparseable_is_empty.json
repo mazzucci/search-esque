@@ -1,0 +1,14 @@
+{
+ "name": "exists_reprinted_unparseable_is_empty",
+ "request": {
+  "size": 0,
+  "query": {
+   "exists": {
+    "field": "reprinted_at"
+   }
+  }
+ },
+ "expect": {
+  "total": 251
+ }
+}

@@ -1,0 +1,51 @@
+{
+ "name": "language_count_asc",
+ "request": {
+  "size": 0,
+  "aggs": {
+   "l": {
+    "terms": {
+     "field": "language",
+     "order": {
+      "_count": "asc"
+     }
+    }
+   }
+  }
+ },
+ "expect": {
+  "total": 400,
+  "aggregations": {
+   "l": {
+    "doc_count_error_upper_bound": 0,
+    "sum_other_doc_count": 0,
+    "buckets": [
+     {
+      "key": "de",
+      "doc_count": 43
+     },
+     {
+      "key": "pt",
+      "doc_count": 44
+     },
+     {
+      "key": "ja",
+      "doc_count": 45
+     },
+     {
+      "key": "es",
+      "doc_count": 48
+     },
+     {
+      "key": "fr",
+      "doc_count": 52
+     },
+     {
+      "key": "en",
+      "doc_count": 168
+     }
+    ]
+   }
+  }
+ }
+}
