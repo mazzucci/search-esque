@@ -40,6 +40,15 @@
   of the store into `exec`, behind a driver trait, so rusqlite and the browser run the same
   code; the `wasm` feature exposes `parse`, `compile`, `mapping`, `schema`, `tokens` and
   `search` to JavaScript.
+- From the playground's review: parameters cross the JavaScript boundary typed, and the page
+  binds reals with `sqlite3_bind_double`, since a JSON `10.0` becomes `10` and SQLite would
+  bind it as an integer (integer division in histograms, wrap-around for huge bounds); the
+  executor rolls back on any failure instead of committing, so a connection is never left in
+  a transaction; rows that do not have SQLite's shape are refused (a fractional or negative
+  count, a hit without `_id` and `_source`, a missing histogram bounds row); a refusal retires
+  the previous result in the page; the vendored SQLite build is checksum-pinned and ships its
+  licence; `dev/wasm_parity.mjs` runs every fixture through the WebAssembly path in CI; the
+  corpus gains `stock_delta`, a negative whole-number field, with a histogram fixture over it.
 - From the second review: the case fold is measured from the bundled SQLite for every code
   point (nothing comes from the toolchain's Unicode tables any more); `terms` on a date without
   a time part means the whole day, like `term`; a histogram whose bucket indexes would overflow

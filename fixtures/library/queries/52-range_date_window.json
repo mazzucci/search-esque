@@ -1,0 +1,48 @@
+{
+ "name": "range_date_window",
+ "request": {
+  "size": 0,
+  "query": {
+   "range": {
+    "added_at": {
+     "gte": "2026-01-01",
+     "lt": "2026-07-01"
+    }
+   }
+  },
+  "aggs": {
+   "by_format": {
+    "terms": {
+     "field": "format"
+    }
+   }
+  }
+ },
+ "expect": {
+  "total": 78,
+  "aggregations": {
+   "by_format": {
+    "doc_count_error_upper_bound": 0,
+    "sum_other_doc_count": 0,
+    "buckets": [
+     {
+      "key": "paperback",
+      "doc_count": 32
+     },
+     {
+      "key": "audiobook",
+      "doc_count": 17
+     },
+     {
+      "key": "ebook",
+      "doc_count": 17
+     },
+     {
+      "key": "hardcover",
+      "doc_count": 12
+     }
+    ]
+   }
+  }
+ }
+}

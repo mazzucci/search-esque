@@ -1,0 +1,14 @@
+{
+ "name": "match_notes_word",
+ "request": {
+  "size": 0,
+  "query": {
+   "match": {
+    "notes": "harbour"
+   }
+  }
+ },
+ "expect": {
+  "total": 65
+ }
+}

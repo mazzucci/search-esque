@@ -68,6 +68,8 @@ Deliberate differences from Elasticsearch, each held by a test:
   cuts a single token at 32 KB where the evaluator does not.
 - A value that does not fit its field's type is empty: `exists` is false for it and it matches
   nothing. Elasticsearch would have refused the record at indexing time.
+- Numbers are one type, compared as doubles: a range bound beyond a long's range is a valid
+  bound here, where Elasticsearch refuses it for a `long` field.
 
 Checked against a real Elasticsearch 9.5.5 (`dev/es_parity.py`, single shard, same records):
 every fixture matches, including date-only range bounds rounding up for `gt` and `lte`, range

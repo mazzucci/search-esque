@@ -1,0 +1,47 @@
+{
+ "name": "stock_delta_histogram_negative_integers",
+ "request": {
+  "size": 0,
+  "aggs": {
+   "h": {
+    "histogram": {
+     "field": "stock_delta",
+     "interval": 10
+    }
+   }
+  }
+ },
+ "expect": {
+  "total": 400,
+  "aggregations": {
+   "h": {
+    "buckets": [
+     {
+      "key": -30,
+      "doc_count": 39
+     },
+     {
+      "key": -20,
+      "doc_count": 79
+     },
+     {
+      "key": -10,
+      "doc_count": 70
+     },
+     {
+      "key": 0,
+      "doc_count": 80
+     },
+     {
+      "key": 10,
+      "doc_count": 89
+     },
+     {
+      "key": 20,
+      "doc_count": 43
+     }
+    ]
+   }
+  }
+ }
+}

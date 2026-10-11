@@ -20,24 +20,19 @@
   }
  },
  "expect": {
-  "total": 276,
+  "total": 253,
   "aggregations": {
    "per_year": {
     "buckets": [
      {
       "key_as_string": "1850-01-01T00:00:00.000Z",
       "key": -3786825600000,
-      "doc_count": 2
+      "doc_count": 1
      },
      {
       "key_as_string": "1851-01-01T00:00:00.000Z",
       "key": -3755289600000,
-      "doc_count": 4
-     },
-     {
-      "key_as_string": "1852-01-01T00:00:00.000Z",
-      "key": -3723753600000,
-      "doc_count": 3
+      "doc_count": 1
      },
      {
       "key_as_string": "1853-01-01T00:00:00.000Z",
@@ -47,17 +42,12 @@
      {
       "key_as_string": "1854-01-01T00:00:00.000Z",
       "key": -3660595200000,
-      "doc_count": 1
+      "doc_count": 3
      },
      {
       "key_as_string": "1855-01-01T00:00:00.000Z",
       "key": -3629059200000,
-      "doc_count": 3
-     },
-     {
-      "key_as_string": "1856-01-01T00:00:00.000Z",
-      "key": -3597523200000,
-      "doc_count": 3
+      "doc_count": 4
      },
      {
       "key_as_string": "1857-01-01T00:00:00.000Z",
@@ -67,57 +57,57 @@
      {
       "key_as_string": "1858-01-01T00:00:00.000Z",
       "key": -3534364800000,
-      "doc_count": 4
+      "doc_count": 2
      },
      {
       "key_as_string": "1859-01-01T00:00:00.000Z",
       "key": -3502828800000,
-      "doc_count": 1
-     },
-     {
-      "key_as_string": "1860-01-01T00:00:00.000Z",
-      "key": -3471292800000,
-      "doc_count": 1
+      "doc_count": 2
      },
      {
       "key_as_string": "1861-01-01T00:00:00.000Z",
       "key": -3439670400000,
-      "doc_count": 1
+      "doc_count": 5
      },
      {
       "key_as_string": "1862-01-01T00:00:00.000Z",
       "key": -3408134400000,
-      "doc_count": 3
+      "doc_count": 2
      },
      {
       "key_as_string": "1863-01-01T00:00:00.000Z",
       "key": -3376598400000,
-      "doc_count": 3
+      "doc_count": 2
      },
      {
       "key_as_string": "1864-01-01T00:00:00.000Z",
       "key": -3345062400000,
+      "doc_count": 1
+     },
+     {
+      "key_as_string": "1865-01-01T00:00:00.000Z",
+      "key": -3313440000000,
       "doc_count": 3
      },
      {
       "key_as_string": "1866-01-01T00:00:00.000Z",
       "key": -3281904000000,
-      "doc_count": 1
+      "doc_count": 5
      },
      {
       "key_as_string": "1867-01-01T00:00:00.000Z",
       "key": -3250368000000,
-      "doc_count": 2
+      "doc_count": 1
      },
      {
       "key_as_string": "1868-01-01T00:00:00.000Z",
       "key": -3218832000000,
-      "doc_count": 1
+      "doc_count": 3
      },
      {
       "key_as_string": "1869-01-01T00:00:00.000Z",
       "key": -3187209600000,
-      "doc_count": 5
+      "doc_count": 3
      },
      {
       "key_as_string": "1870-01-01T00:00:00.000Z",
@@ -127,27 +117,22 @@
      {
       "key_as_string": "1871-01-01T00:00:00.000Z",
       "key": -3124137600000,
-      "doc_count": 1
-     },
-     {
-      "key_as_string": "1872-01-01T00:00:00.000Z",
-      "key": -3092601600000,
       "doc_count": 2
      },
      {
       "key_as_string": "1873-01-01T00:00:00.000Z",
       "key": -3060979200000,
-      "doc_count": 1
+      "doc_count": 2
      },
      {
       "key_as_string": "1874-01-01T00:00:00.000Z",
       "key": -3029443200000,
-      "doc_count": 1
+      "doc_count": 2
      },
      {
       "key_as_string": "1875-01-01T00:00:00.000Z",
       "key": -2997907200000,
-      "doc_count": 1
+      "doc_count": 2
      },
      {
       "key_as_string": "1876-01-01T00:00:00.000Z",
@@ -157,7 +142,7 @@
      {
       "key_as_string": "1877-01-01T00:00:00.000Z",
       "key": -2934748800000,
-      "doc_count": 1
+      "doc_count": 4
      },
      {
       "key_as_string": "1878-01-01T00:00:00.000Z",
@@ -165,64 +150,54 @@
       "doc_count": 2
      },
      {
-      "key_as_string": "1879-01-01T00:00:00.000Z",
-      "key": -2871676800000,
-      "doc_count": 2
-     },
-     {
       "key_as_string": "1880-01-01T00:00:00.000Z",
       "key": -2840140800000,
-      "doc_count": 2
+      "doc_count": 3
      },
      {
       "key_as_string": "1881-01-01T00:00:00.000Z",
       "key": -2808518400000,
-      "doc_count": 3
+      "doc_count": 1
      },
      {
       "key_as_string": "1882-01-01T00:00:00.000Z",
       "key": -2776982400000,
-      "doc_count": 1
+      "doc_count": 2
      },
      {
       "key_as_string": "1883-01-01T00:00:00.000Z",
       "key": -2745446400000,
-      "doc_count": 5
+      "doc_count": 1
      },
      {
       "key_as_string": "1884-01-01T00:00:00.000Z",
       "key": -2713910400000,
-      "doc_count": 2
+      "doc_count": 3
      },
      {
       "key_as_string": "1885-01-01T00:00:00.000Z",
       "key": -2682288000000,
-      "doc_count": 4
+      "doc_count": 1
      },
      {
       "key_as_string": "1886-01-01T00:00:00.000Z",
       "key": -2650752000000,
-      "doc_count": 6
-     },
-     {
-      "key_as_string": "1887-01-01T00:00:00.000Z",
-      "key": -2619216000000,
       "doc_count": 1
      },
      {
       "key_as_string": "1888-01-01T00:00:00.000Z",
       "key": -2587680000000,
-      "doc_count": 2
+      "doc_count": 6
      },
      {
       "key_as_string": "1889-01-01T00:00:00.000Z",
       "key": -2556057600000,
-      "doc_count": 3
+      "doc_count": 2
      },
      {
       "key_as_string": "1890-01-01T00:00:00.000Z",
       "key": -2524521600000,
-      "doc_count": 1
+      "doc_count": 2
      },
      {
       "key_as_string": "1891-01-01T00:00:00.000Z",
@@ -237,42 +212,47 @@
      {
       "key_as_string": "1893-01-01T00:00:00.000Z",
       "key": -2429827200000,
-      "doc_count": 2
+      "doc_count": 3
      },
      {
       "key_as_string": "1894-01-01T00:00:00.000Z",
       "key": -2398291200000,
-      "doc_count": 4
+      "doc_count": 5
      },
      {
       "key_as_string": "1895-01-01T00:00:00.000Z",
       "key": -2366755200000,
-      "doc_count": 6
+      "doc_count": 3
      },
      {
       "key_as_string": "1897-01-01T00:00:00.000Z",
       "key": -2303596800000,
-      "doc_count": 4
+      "doc_count": 2
      },
      {
       "key_as_string": "1898-01-01T00:00:00.000Z",
       "key": -2272060800000,
-      "doc_count": 4
+      "doc_count": 1
      },
      {
       "key_as_string": "1899-01-01T00:00:00.000Z",
       "key": -2240524800000,
-      "doc_count": 2
+      "doc_count": 1
      },
      {
       "key_as_string": "1900-01-01T00:00:00.000Z",
       "key": -2208988800000,
-      "doc_count": 4
+      "doc_count": 2
+     },
+     {
+      "key_as_string": "1901-01-01T00:00:00.000Z",
+      "key": -2177452800000,
+      "doc_count": 2
      },
      {
       "key_as_string": "1902-01-01T00:00:00.000Z",
       "key": -2145916800000,
-      "doc_count": 4
+      "doc_count": 5
      },
      {
       "key_as_string": "1903-01-01T00:00:00.000Z",
@@ -282,27 +262,22 @@
      {
       "key_as_string": "1904-01-01T00:00:00.000Z",
       "key": -2082844800000,
-      "doc_count": 4
+      "doc_count": 3
      },
      {
       "key_as_string": "1905-01-01T00:00:00.000Z",
       "key": -2051222400000,
-      "doc_count": 2
-     },
-     {
-      "key_as_string": "1906-01-01T00:00:00.000Z",
-      "key": -2019686400000,
-      "doc_count": 1
+      "doc_count": 4
      },
      {
       "key_as_string": "1907-01-01T00:00:00.000Z",
       "key": -1988150400000,
-      "doc_count": 3
+      "doc_count": 1
      },
      {
       "key_as_string": "1908-01-01T00:00:00.000Z",
       "key": -1956614400000,
-      "doc_count": 4
+      "doc_count": 2
      },
      {
       "key_as_string": "1909-01-01T00:00:00.000Z",
@@ -312,27 +287,27 @@
      {
       "key_as_string": "1910-01-01T00:00:00.000Z",
       "key": -1893456000000,
-      "doc_count": 1
+      "doc_count": 3
      },
      {
       "key_as_string": "1911-01-01T00:00:00.000Z",
       "key": -1861920000000,
-      "doc_count": 3
+      "doc_count": 6
      },
      {
       "key_as_string": "1912-01-01T00:00:00.000Z",
       "key": -1830384000000,
-      "doc_count": 1
+      "doc_count": 2
      },
      {
       "key_as_string": "1913-01-01T00:00:00.000Z",
       "key": -1798761600000,
-      "doc_count": 2
+      "doc_count": 1
      },
      {
       "key_as_string": "1914-01-01T00:00:00.000Z",
       "key": -1767225600000,
-      "doc_count": 2
+      "doc_count": 4
      },
      {
       "key_as_string": "1915-01-01T00:00:00.000Z",
@@ -342,21 +317,26 @@
      {
       "key_as_string": "1916-01-01T00:00:00.000Z",
       "key": -1704153600000,
-      "doc_count": 4
+      "doc_count": 1
      },
      {
       "key_as_string": "1917-01-01T00:00:00.000Z",
       "key": -1672531200000,
-      "doc_count": 3
+      "doc_count": 1
      },
      {
       "key_as_string": "1918-01-01T00:00:00.000Z",
       "key": -1640995200000,
-      "doc_count": 2
+      "doc_count": 4
      },
      {
       "key_as_string": "1919-01-01T00:00:00.000Z",
       "key": -1609459200000,
+      "doc_count": 2
+     },
+     {
+      "key_as_string": "1920-01-01T00:00:00.000Z",
+      "key": -1577923200000,
       "doc_count": 1
      },
      {
@@ -365,49 +345,54 @@
       "doc_count": 2
      },
      {
+      "key_as_string": "1922-01-01T00:00:00.000Z",
+      "key": -1514764800000,
+      "doc_count": 2
+     },
+     {
+      "key_as_string": "1923-01-01T00:00:00.000Z",
+      "key": -1483228800000,
+      "doc_count": 4
+     },
+     {
       "key_as_string": "1924-01-01T00:00:00.000Z",
       "key": -1451692800000,
-      "doc_count": 3
+      "doc_count": 1
      },
      {
       "key_as_string": "1925-01-01T00:00:00.000Z",
       "key": -1420070400000,
-      "doc_count": 3
-     },
-     {
-      "key_as_string": "1926-01-01T00:00:00.000Z",
-      "key": -1388534400000,
-      "doc_count": 1
+      "doc_count": 2
      },
      {
       "key_as_string": "1927-01-01T00:00:00.000Z",
       "key": -1356998400000,
-      "doc_count": 5
+      "doc_count": 3
      },
      {
       "key_as_string": "1928-01-01T00:00:00.000Z",
       "key": -1325462400000,
-      "doc_count": 1
+      "doc_count": 3
      },
      {
       "key_as_string": "1929-01-01T00:00:00.000Z",
       "key": -1293840000000,
-      "doc_count": 2
+      "doc_count": 4
      },
      {
       "key_as_string": "1930-01-01T00:00:00.000Z",
       "key": -1262304000000,
-      "doc_count": 2
+      "doc_count": 4
      },
      {
       "key_as_string": "1931-01-01T00:00:00.000Z",
       "key": -1230768000000,
-      "doc_count": 2
+      "doc_count": 1
      },
      {
       "key_as_string": "1932-01-01T00:00:00.000Z",
       "key": -1199232000000,
-      "doc_count": 4
+      "doc_count": 2
      },
      {
       "key_as_string": "1933-01-01T00:00:00.000Z",
@@ -432,7 +417,7 @@
      {
       "key_as_string": "1937-01-01T00:00:00.000Z",
       "key": -1041379200000,
-      "doc_count": 1
+      "doc_count": 3
      },
      {
       "key_as_string": "1938-01-01T00:00:00.000Z",
@@ -440,29 +425,24 @@
       "doc_count": 2
      },
      {
-      "key_as_string": "1939-01-01T00:00:00.000Z",
-      "key": -978307200000,
-      "doc_count": 3
-     },
-     {
       "key_as_string": "1940-01-01T00:00:00.000Z",
       "key": -946771200000,
-      "doc_count": 1
+      "doc_count": 3
      },
      {
       "key_as_string": "1941-01-01T00:00:00.000Z",
       "key": -915148800000,
-      "doc_count": 3
+      "doc_count": 4
      },
      {
       "key_as_string": "1942-01-01T00:00:00.000Z",
       "key": -883612800000,
-      "doc_count": 4
+      "doc_count": 3
      },
      {
-      "key_as_string": "1944-01-01T00:00:00.000Z",
-      "key": -820540800000,
-      "doc_count": 2
+      "key_as_string": "1943-01-01T00:00:00.000Z",
+      "key": -852076800000,
+      "doc_count": 1
      },
      {
       "key_as_string": "1945-01-01T00:00:00.000Z",
@@ -470,14 +450,9 @@
       "doc_count": 2
      },
      {
-      "key_as_string": "1946-01-01T00:00:00.000Z",
-      "key": -757382400000,
-      "doc_count": 2
-     },
-     {
       "key_as_string": "1947-01-01T00:00:00.000Z",
       "key": -725846400000,
-      "doc_count": 1
+      "doc_count": 5
      },
      {
       "key_as_string": "1948-01-01T00:00:00.000Z",
@@ -487,42 +462,32 @@
      {
       "key_as_string": "1949-01-01T00:00:00.000Z",
       "key": -662688000000,
-      "doc_count": 2
+      "doc_count": 3
      },
      {
       "key_as_string": "1950-01-01T00:00:00.000Z",
       "key": -631152000000,
-      "doc_count": 3
+      "doc_count": 4
+     },
+     {
+      "key_as_string": "1951-01-01T00:00:00.000Z",
+      "key": -599616000000,
+      "doc_count": 1
      },
      {
       "key_as_string": "1952-01-01T00:00:00.000Z",
       "key": -568080000000,
-      "doc_count": 5
-     },
-     {
-      "key_as_string": "1953-01-01T00:00:00.000Z",
-      "key": -536457600000,
-      "doc_count": 1
+      "doc_count": 2
      },
      {
       "key_as_string": "1954-01-01T00:00:00.000Z",
       "key": -504921600000,
-      "doc_count": 3
+      "doc_count": 1
      },
      {
       "key_as_string": "1955-01-01T00:00:00.000Z",
       "key": -473385600000,
-      "doc_count": 2
-     },
-     {
-      "key_as_string": "1956-01-01T00:00:00.000Z",
-      "key": -441849600000,
       "doc_count": 1
-     },
-     {
-      "key_as_string": "1957-01-01T00:00:00.000Z",
-      "key": -410227200000,
-      "doc_count": 4
      },
      {
       "key_as_string": "1958-01-01T00:00:00.000Z",
@@ -532,7 +497,7 @@
      {
       "key_as_string": "1959-01-01T00:00:00.000Z",
       "key": -347155200000,
-      "doc_count": 4
+      "doc_count": 2
      },
      {
       "key_as_string": "1960-01-01T00:00:00.000Z",
@@ -540,14 +505,24 @@
       "doc_count": 2
      },
      {
+      "key_as_string": "1961-01-01T00:00:00.000Z",
+      "key": -283996800000,
+      "doc_count": 2
+     },
+     {
       "key_as_string": "1962-01-01T00:00:00.000Z",
       "key": -252460800000,
-      "doc_count": 4
+      "doc_count": 1
+     },
+     {
+      "key_as_string": "1963-01-01T00:00:00.000Z",
+      "key": -220924800000,
+      "doc_count": 1
      },
      {
       "key_as_string": "1964-01-01T00:00:00.000Z",
       "key": -189388800000,
-      "doc_count": 2
+      "doc_count": 3
      },
      {
       "key_as_string": "1965-01-01T00:00:00.000Z",
@@ -555,24 +530,14 @@
       "doc_count": 1
      },
      {
-      "key_as_string": "1966-01-01T00:00:00.000Z",
-      "key": -126230400000,
-      "doc_count": 2
-     },
-     {
       "key_as_string": "1967-01-01T00:00:00.000Z",
       "key": -94694400000,
-      "doc_count": 3
-     },
-     {
-      "key_as_string": "1968-01-01T00:00:00.000Z",
-      "key": -63158400000,
       "doc_count": 2
      },
      {
       "key_as_string": "1969-01-01T00:00:00.000Z",
       "key": -31536000000,
-      "doc_count": 16
+      "doc_count": 15
      }
     ]
    }

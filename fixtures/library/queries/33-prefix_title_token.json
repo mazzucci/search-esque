@@ -1,0 +1,14 @@
+{
+ "name": "prefix_title_token",
+ "request": {
+  "size": 0,
+  "query": {
+   "prefix": {
+    "title": "lan"
+   }
+  }
+ },
+ "expect": {
+  "total": 63
+ }
+}

@@ -21,7 +21,14 @@ use std::sync::OnceLock;
 const KEYWORDS: &[&str] = &["author", "publisher", "language", "format", "isbn"];
 const KEYWORD_ARRAYS: &[&str] = &["genres", "tags"];
 const TEXTS: &[&str] = &["title", "summary", "notes"];
-const NUMBERS: &[&str] = &["pages", "price", "rating", "balance", "copies"];
+const NUMBERS: &[&str] = &[
+    "pages",
+    "price",
+    "rating",
+    "balance",
+    "copies",
+    "stock_delta",
+];
 const BOOLS: &[&str] = &["available"];
 const DATES: &[&str] = &[
     "published_at",
@@ -44,6 +51,7 @@ const ALL: &[&str] = &[
     "rating",
     "balance",
     "copies",
+    "stock_delta",
     "available",
     "published_at",
     "added_at",
@@ -63,6 +71,7 @@ const AGGREGATABLE: &[&str] = &[
     "rating",
     "balance",
     "copies",
+    "stock_delta",
     "available",
     "published_at",
     "added_at",

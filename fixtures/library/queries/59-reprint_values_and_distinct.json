@@ -1,0 +1,29 @@
+{
+ "name": "reprint_values_and_distinct",
+ "request": {
+  "size": 0,
+  "aggs": {
+   "n": {
+    "value_count": {
+     "field": "reprinted_at"
+    }
+   },
+   "d": {
+    "cardinality": {
+     "field": "reprinted_at"
+    }
+   }
+  }
+ },
+ "expect": {
+  "total": 400,
+  "aggregations": {
+   "n": {
+    "value": 486
+   },
+   "d": {
+    "value": 486
+   }
+  }
+ }
+}

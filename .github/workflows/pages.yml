@@ -1,7 +1,9 @@
 name: Playground
 
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
@@ -12,10 +14,12 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
+    # only after CI passed on main (or on request)
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,8 +27,10 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-      - name: Install wasm-pack
-        run: curl -sSf https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
+      - name: Install wasm-pack 0.15.0
+        run: |
+          curl -sSL https://github.com/rustwasm/wasm-pack/releases/download/v0.15.0/wasm-pack-v0.15.0-x86_64-unknown-linux-musl.tar.gz | tar xz
+          sudo mv wasm-pack-v0.15.0-x86_64-unknown-linux-musl/wasm-pack /usr/local/bin/
       - name: Build the WebAssembly package
         run: wasm-pack build --release --target web --out-dir web/pkg -- --no-default-features --features wasm
       - name: Vendor the SQLite WebAssembly build
@@ -35,7 +41,6 @@ jobs:
           mkdir -p web/demo
           target/release/esque load --mapping fixtures/library/mapping.json --docs fixtures/library/docs.json --db web/demo/library.db
           cp fixtures/library/mapping.json web/demo/mapping.json
-          rm -f web/pkg/.gitignore
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

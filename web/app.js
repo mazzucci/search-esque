@@ -3,6 +3,7 @@
 // executor that interprets the rows is the crate's own, driven through the `run` callback, so
 // the page runs exactly the logic the native store runs.
 import init, { parse, compile, search } from './pkg/search_esque.js';
+import { makeRunner, settle } from './driver.js';
 
 // The official SQLite build, which ships FTS5 and JSON (sql.js does not include FTS5), vendored
 // by the build step (see dev/vendor_sqlite.sh) so the page depends on no CDN.
@@ -41,8 +42,10 @@ const EXAMPLES = [
 
 const $ = (id) => document.getElementById(id);
 let mapping = '';
+let sqlite3 = null;
 let db = null;
 let debounce = null;
+const RESULT_PLACEHOLDER = '<p class="muted">Press <b>Run on demo store</b> to execute the statements with SQLite compiled to WebAssembly and see the Elasticsearch-shaped response.</p>';
 
 function esc(s) {
   return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -75,13 +78,21 @@ function renderSql(c) {
     });
   });
   parts.push(statement('Last. Clean up', { sql: c.cleanup, params: [] }));
-  parts.push(`<p class="muted">All of it runs inside one read transaction. Every value is a bound parameter; identifiers come only from the mapping.</p>`);
+  parts.push(`<p class="muted">All of it runs inside one transaction, rolled back if anything fails. Every value is a bound parameter; identifiers come only from the mapping.</p>`);
   $('panel-sql').innerHTML = parts.join('');
 }
 
 function translate() {
   const req = $('request').value;
-  const c = JSON.parse(compile(mapping, req));
+  // a result belongs to the request it was run for; an edit retires it
+  $('panel-result').innerHTML = RESULT_PLACEHOLDER;
+  let c;
+  try {
+    c = JSON.parse(compile(mapping, req));
+  } catch (e) {
+    showError({ path: '$', message: `the compiler failed: ${e.message || e}` });
+    return;
+  }
   if (c.error) {
     showError(c.error);
     $('panel-sql').innerHTML = '';
@@ -98,22 +109,11 @@ function translate() {
   $('run').disabled = !db;
 }
 
-// The executor's driver: one statement in, its rows out, as a JSON string. Errors come back
-// as {"error"} so the crate can report them with a path.
-function runStatement(sql, paramsJson) {
-  try {
-    const params = JSON.parse(paramsJson);
-    const rows = db.exec({ sql, bind: params.length ? params : undefined, returnValue: 'resultRows', rowMode: 'array' });
-    // integers beyond 2^53 arrive as BigInt, which JSON cannot carry
-    return JSON.stringify({ rows }, (_, v) => (typeof v === 'bigint' ? Number(v) : v));
-  } catch (e) {
-    return JSON.stringify({ error: String(e && e.message ? e.message : e) });
-  }
-}
+let runStatement = null;
 
 function bucketTable(agg) {
   if (!agg.buckets) return `<pre class="code">${esc(JSON.stringify(agg, null, 2))}</pre>`;
-  const max = Math.max(1, ...agg.buckets.map((b) => b.doc_count));
+  const max = agg.buckets.reduce((m, b) => Math.max(m, b.doc_count), 1);
   const rows = agg.buckets.map((b) => {
     const key = b.key_as_string !== undefined ? b.key_as_string : b.key;
     return `<tr><td>${esc(key)}</td><td>${b.doc_count}</td><td><span class="bar" style="width:${Math.round(120 * b.doc_count / max)}px"></span></td></tr>`;
@@ -134,10 +134,16 @@ function renderResult(res) {
 }
 
 function run() {
-  const res = JSON.parse(search(mapping, $('request').value, runStatement));
+  let res;
+  try {
+    res = JSON.parse(search(mapping, $('request').value, runStatement));
+  } catch (e) {
+    res = { error: { path: 'sqlite', message: `the executor failed: ${e.message || e}` } };
+  }
+  settle(sqlite3, db);
   activate('result');
   if (res.error) {
-    $('panel-result').innerHTML = '';
+    $('panel-result').innerHTML = RESULT_PLACEHOLDER;
     showError(res.error);
     return;
   }
@@ -159,7 +165,7 @@ function renderFields(m) {
 
 async function loadDemoStore() {
   const { default: sqlite3InitModule } = await import(SQLITE_WASM);
-  const sqlite3 = await sqlite3InitModule({ print: () => {}, printErr: () => {} });
+  sqlite3 = await sqlite3InitModule({ print: () => {}, printErr: () => {} });
   const bytes = new Uint8Array(await (await fetch('./demo/library.db')).arrayBuffer());
   const candidate = new sqlite3.oo1.DB();
   const p = sqlite3.wasm.allocFromTypedArray(bytes);
@@ -193,6 +199,7 @@ async function main() {
   $('status').textContent = 'compiler ready · loading the demo store…';
   try {
     db = await loadDemoStore();
+    runStatement = makeRunner(sqlite3, db);
     $('status').textContent = 'compiler and demo store ready';
     $('run').disabled = $('error').hidden === false;
   } catch (e) {

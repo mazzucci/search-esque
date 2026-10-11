@@ -3,12 +3,17 @@
 //! `{"error": {...}}`. Running a request needs SQLite in the browser: the page passes a
 //! callback that executes one statement and returns its rows, and the core's executor does the
 //! rest, so the page runs exactly the logic the native store runs.
+//!
+//! Parameters cross typed, because JSON cannot tell `10.0` from `10` and SQLite binds the two
+//! differently (integer division, int64 wrap-around for huge values): each is `null`,
+//! `{"int": n}`, `{"real": x}` or `{"text": s}`, and the callback must bind a real with
+//! `sqlite3_bind_double`.
 
 use crate::dsl::{parse_request, to_elasticsearch};
 use crate::error::{Error, Result};
 use crate::exec::{self, Executor, SqlValue};
 use crate::mapping::Mapping;
-use crate::sql::Statement;
+use crate::sql::{Param, Statement};
 use serde::Serialize;
 use serde_json::{json, Value};
 use wasm_bindgen::prelude::*;
@@ -74,15 +79,32 @@ pub fn tokens(text: &str) -> String {
     serde_json::to_string(&crate::tokenize::tokens(text)).unwrap_or_default()
 }
 
+/// A parameter as the callback receives it: typed, so a real stays a real.
+pub fn typed_param(p: &Param) -> Value {
+    match p {
+        Param::Null => Value::Null,
+        Param::Int(i) => json!({"int": i}),
+        Param::Real(x) => json!({"real": x}),
+        Param::Text(s) => json!({"text": s}),
+    }
+}
+
 /// A JavaScript function `(sql, paramsJson) => json` as the executor. It returns a JSON string:
-/// `{"rows": [[...], ...]}` or `{"error": "..."}`. Parameters arrive as a JSON array in
-/// statement order; null, numbers and strings, as SQLite's own types.
+/// `{"rows": [[...], ...]}` or `{"error": "..."}`.
 struct JsExecutor<'a>(&'a js_sys::Function);
+
+fn js_message(e: JsValue) -> String {
+    if let Some(err) = e.dyn_ref::<js_sys::Error>() {
+        return String::from(err.message());
+    }
+    e.as_string().unwrap_or_else(|| format!("{:?}", e))
+}
 
 impl Executor for JsExecutor<'_> {
     fn query(&mut self, st: &Statement) -> Result<Vec<Vec<SqlValue>>> {
+        let params: Vec<Value> = st.params.iter().map(typed_param).collect();
         let params =
-            serde_json::to_string(&st.params).map_err(|e| Error::new("sqlite", e.to_string()))?;
+            serde_json::to_string(&params).map_err(|e| Error::new("sqlite", e.to_string()))?;
         let answer = self
             .0
             .call2(
@@ -90,7 +112,12 @@ impl Executor for JsExecutor<'_> {
                 &JsValue::from_str(&st.sql),
                 &JsValue::from_str(&params),
             )
-            .map_err(|e| Error::new("sqlite", format!("the run callback threw: {:?}", e)))?;
+            .map_err(|e| {
+                Error::new(
+                    "sqlite",
+                    format!("the run callback threw: {}", js_message(e)),
+                )
+            })?;
         let text = answer
             .as_string()
             .ok_or_else(|| Error::new("sqlite", "the run callback must return a JSON string"))?;
@@ -100,23 +127,26 @@ impl Executor for JsExecutor<'_> {
                 format!("the run callback returned invalid JSON: {}", e),
             )
         })?;
-        if let Some(err) = v.get("error") {
-            return Err(Error::new(
-                "sqlite",
-                err.as_str().unwrap_or("the statement failed").to_string(),
-            ));
+        match v.get("error") {
+            None | Some(Value::Null) => {}
+            Some(Value::String(s)) => return Err(Error::new("sqlite", s.clone())),
+            Some(other) => return Err(Error::new("sqlite", other.to_string())),
         }
         let rows = v.get("rows").and_then(Value::as_array).ok_or_else(|| {
             Error::new("sqlite", "the run callback must return {\"rows\": [...]}")
         })?;
-        Ok(rows
-            .iter()
+        rows.iter()
             .map(|r| {
                 r.as_array()
                     .map(|cells| cells.iter().map(SqlValue::from_json).collect())
-                    .unwrap_or_default()
+                    .ok_or_else(|| {
+                        Error::new(
+                            "sqlite",
+                            "the run callback returned a row that is not an array",
+                        )
+                    })
             })
-            .collect())
+            .collect()
     }
 }
 
@@ -129,4 +159,20 @@ pub fn search(mapping: &str, request: &str, run: &js_sys::Function) -> String {
         let req = parse_request(&request_of(request)?, &m)?;
         exec::search(&mut JsExecutor(run), &req, &m)
     })())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reals_stay_reals_across_the_boundary() {
+        assert_eq!(typed_param(&Param::Real(10.0)), json!({"real": 10.0}));
+        assert_eq!(typed_param(&Param::Int(10)), json!({"int": 10}));
+        assert_eq!(
+            serde_json::to_string(&typed_param(&Param::Real(10.0))).unwrap(),
+            "{\"real\":10.0}"
+        );
+        assert_eq!(typed_param(&Param::Null), Value::Null);
+    }
 }

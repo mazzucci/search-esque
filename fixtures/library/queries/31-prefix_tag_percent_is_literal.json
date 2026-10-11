@@ -1,0 +1,14 @@
+{
+ "name": "prefix_tag_percent_is_literal",
+ "request": {
+  "size": 0,
+  "query": {
+   "prefix": {
+    "tags": "50%"
+   }
+  }
+ },
+ "expect": {
+  "total": 42
+ }
+}

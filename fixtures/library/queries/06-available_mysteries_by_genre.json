@@ -35,43 +35,43 @@
   "size": 10
  },
  "expect": {
-  "total": 53,
+  "total": 47,
   "hit_ids": [
-   "b0249",
-   "b0084",
-   "b0021",
-   "b0195",
-   "b0303",
-   "b0202",
-   "b0119",
-   "b0273",
-   "b0308",
-   "b0110"
+   "b0384",
+   "b0244",
+   "b0297",
+   "b0117",
+   "b0257",
+   "b0217",
+   "b0311",
+   "b0319",
+   "b0032",
+   "b0348"
   ],
   "aggregations": {
    "genres": {
     "doc_count_error_upper_bound": 0,
-    "sum_other_doc_count": 37,
+    "sum_other_doc_count": 43,
     "buckets": [
      {
       "key": "mystery",
-      "doc_count": 53
+      "doc_count": 47
      },
      {
-      "key": "fantasy",
+      "key": "science",
       "doc_count": 14
      },
      {
-      "key": "fiction",
-      "doc_count": 14
-     },
-     {
-      "key": "cooking",
-      "doc_count": 9
+      "key": "history",
+      "doc_count": 12
      },
      {
       "key": "memoir",
-      "doc_count": 9
+      "doc_count": 12
+     },
+     {
+      "key": "fantasy",
+      "doc_count": 11
      }
     ]
    }

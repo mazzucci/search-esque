@@ -18,23 +18,23 @@
     "buckets": [
      {
       "key": 0,
-      "doc_count": 99
+      "doc_count": 79
      },
      {
       "key": 3,
-      "doc_count": 82
+      "doc_count": 89
      },
      {
       "key": 6,
-      "doc_count": 87
+      "doc_count": 97
      },
      {
       "key": 9,
-      "doc_count": 95
+      "doc_count": 106
      },
      {
       "key": 12,
-      "doc_count": 37
+      "doc_count": 29
      }
     ]
    }
