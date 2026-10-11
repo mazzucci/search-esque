@@ -1,0 +1,15 @@
+{
+ "name": "err_terms_on_text",
+ "request": {
+  "aggs": {
+   "by": {
+    "terms": {
+     "field": "title"
+    }
+   }
+  }
+ },
+ "expect": {
+  "error_path": "aggs.by.terms.field"
+ }
+}

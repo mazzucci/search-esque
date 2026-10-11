@@ -1,0 +1,14 @@
+{
+ "name": "prefix_author",
+ "request": {
+  "size": 0,
+  "query": {
+   "prefix": {
+    "author": "ker"
+   }
+  }
+ },
+ "expect": {
+  "total": 44
+ }
+}

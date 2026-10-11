@@ -1,0 +1,53 @@
+{
+ "properties": {
+  "title": {
+   "type": "text"
+  },
+  "body": {
+   "type": "text"
+  },
+  "state": {
+   "type": "keyword"
+  },
+  "state_reason": {
+   "type": "keyword"
+  },
+  "author": {
+   "type": "keyword"
+  },
+  "author_type": {
+   "type": "keyword"
+  },
+  "author_association": {
+   "type": "keyword"
+  },
+  "labels": {
+   "type": "keyword",
+   "array": true
+  },
+  "closed_by": {
+   "type": "keyword"
+  },
+  "draft": {
+   "type": "boolean"
+  },
+  "comments": {
+   "type": "long"
+  },
+  "reactions": {
+   "type": "long"
+  },
+  "created_at": {
+   "type": "date"
+  },
+  "updated_at": {
+   "type": "date"
+  },
+  "closed_at": {
+   "type": "date"
+  },
+  "merged_at": {
+   "type": "date"
+  }
+ }
+}

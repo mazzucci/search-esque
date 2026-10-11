@@ -1,0 +1,80 @@
+{
+ "name": "open_bugs_by_label",
+ "request": {
+  "query": {
+   "bool": {
+    "filter": [
+     {
+      "term": {
+       "state": "open"
+      }
+     },
+     {
+      "terms": {
+       "labels": [
+        "bug"
+       ]
+      }
+     }
+    ]
+   }
+  },
+  "aggs": {
+   "labels": {
+    "terms": {
+     "field": "labels",
+     "size": 5
+    }
+   }
+  },
+  "sort": [
+   {
+    "comments": "desc"
+   }
+  ],
+  "size": 10
+ },
+ "expect": {
+  "total": 12,
+  "hit_ids": [
+   "5684",
+   "6354",
+   "4133",
+   "4634",
+   "6048",
+   "3784",
+   "6482",
+   "6508",
+   "2808",
+   "5298"
+  ],
+  "aggregations": {
+   "labels": {
+    "doc_count_error_upper_bound": 0,
+    "sum_other_doc_count": 11,
+    "buckets": [
+     {
+      "key": "bug",
+      "doc_count": 12
+     },
+     {
+      "key": "good first issue",
+      "doc_count": 2
+     },
+     {
+      "key": "rust",
+      "doc_count": 2
+     },
+     {
+      "key": "Internal work",
+      "doc_count": 1
+     },
+     {
+      "key": "Revenue generation / Attraction",
+      "doc_count": 1
+     }
+    ]
+   }
+  }
+ }
+}

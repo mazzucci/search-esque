@@ -1,0 +1,14 @@
+{
+ "name": "match_apostrophe_token",
+ "request": {
+  "size": 0,
+  "query": {
+   "match": {
+    "title": "doesn"
+   }
+  }
+ },
+ "expect": {
+  "total": 1
+ }
+}

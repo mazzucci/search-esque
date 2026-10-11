@@ -1,0 +1,14 @@
+{
+ "name": "term_case_insensitive",
+ "request": {
+  "size": 0,
+  "query": {
+   "term": {
+    "state": "OPEN"
+   }
+  }
+ },
+ "expect": {
+  "total": 95
+ }
+}

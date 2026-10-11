@@ -1,0 +1,40 @@
+{
+ "name": "range_date_window",
+ "request": {
+  "size": 0,
+  "query": {
+   "range": {
+    "created_at": {
+     "gte": "2026-07-01",
+     "lt": "2026-10-01"
+    }
+   }
+  },
+  "aggs": {
+   "by_state": {
+    "terms": {
+     "field": "state"
+    }
+   }
+  }
+ },
+ "expect": {
+  "total": 169,
+  "aggregations": {
+   "by_state": {
+    "doc_count_error_upper_bound": 0,
+    "sum_other_doc_count": 0,
+    "buckets": [
+     {
+      "key": "closed",
+      "doc_count": 123
+     },
+     {
+      "key": "open",
+      "doc_count": 46
+     }
+    ]
+   }
+  }
+ }
+}

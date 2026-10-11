@@ -1,0 +1,22 @@
+{
+ "name": "err_sub_aggregation",
+ "request": {
+  "aggs": {
+   "by": {
+    "terms": {
+     "field": "state"
+    },
+    "aggs": {
+     "c": {
+      "avg": {
+       "field": "comments"
+      }
+     }
+    }
+   }
+  }
+ },
+ "expect": {
+  "error_path": "aggs.by.aggs"
+ }
+}

@@ -1,0 +1,27 @@
+{
+ "name": "filter_vs_must_same",
+ "request": {
+  "size": 0,
+  "query": {
+   "bool": {
+    "must": [
+     {
+      "term": {
+       "state": "open"
+      }
+     }
+    ],
+    "filter": [
+     {
+      "exists": {
+       "field": "closed_by"
+      }
+     }
+    ]
+   }
+  }
+ },
+ "expect": {
+  "total": 0
+ }
+}

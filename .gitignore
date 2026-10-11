@@ -1,0 +1,5 @@
+/target
+/pkg
+*.db
+proptest-regressions/
+.DS_Store

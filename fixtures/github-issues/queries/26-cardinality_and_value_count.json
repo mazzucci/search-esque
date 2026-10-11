@@ -1,0 +1,37 @@
+{
+ "name": "cardinality_and_value_count",
+ "request": {
+  "size": 0,
+  "aggs": {
+   "authors": {
+    "cardinality": {
+     "field": "author"
+    }
+   },
+   "label_values": {
+    "value_count": {
+     "field": "labels"
+    }
+   },
+   "n": {
+    "value_count": {
+     "field": "closed_by"
+    }
+   }
+  }
+ },
+ "expect": {
+  "total": 336,
+  "aggregations": {
+   "authors": {
+    "value": 121
+   },
+   "label_values": {
+    "value": 382
+   },
+   "n": {
+    "value": 241
+   }
+  }
+ }
+}

@@ -1,0 +1,14 @@
+{
+ "name": "match_title_facet",
+ "request": {
+  "size": 0,
+  "query": {
+   "match": {
+    "title": "facet"
+   }
+  }
+ },
+ "expect": {
+  "total": 10
+ }
+}

@@ -1,0 +1,15 @@
+{
+ "name": "err_quoted_number",
+ "request": {
+  "query": {
+   "range": {
+    "comments": {
+     "gte": "5"
+    }
+   }
+  }
+ },
+ "expect": {
+  "error_path": "query.range.comments.gte"
+ }
+}

@@ -1,0 +1,9 @@
+{
+ "name": "err_size_too_big",
+ "request": {
+  "size": 20000
+ },
+ "expect": {
+  "error_path": "size"
+ }
+}

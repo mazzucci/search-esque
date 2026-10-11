@@ -1,0 +1,25 @@
+{
+ "name": "should_open_or_completed",
+ "request": {
+  "size": 0,
+  "query": {
+   "bool": {
+    "should": [
+     {
+      "term": {
+       "state": "open"
+      }
+     },
+     {
+      "term": {
+       "state_reason": "completed"
+      }
+     }
+    ]
+   }
+  }
+ },
+ "expect": {
+  "total": 132
+ }
+}

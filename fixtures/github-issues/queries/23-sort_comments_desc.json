@@ -1,0 +1,26 @@
+{
+ "name": "sort_comments_desc",
+ "request": {
+  "query": {
+   "match_all": {}
+  },
+  "sort": [
+   {
+    "comments": {
+     "order": "desc"
+    }
+   }
+  ],
+  "size": 5
+ },
+ "expect": {
+  "total": 336,
+  "hit_ids": [
+   "5985",
+   "6572",
+   "5684",
+   "6354",
+   "6486"
+  ]
+ }
+}

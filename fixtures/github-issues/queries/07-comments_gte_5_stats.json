@@ -1,0 +1,48 @@
+{
+ "name": "comments_gte_5_stats",
+ "request": {
+  "size": 0,
+  "query": {
+   "range": {
+    "comments": {
+     "gte": 5
+    }
+   }
+  },
+  "aggs": {
+   "c": {
+    "stats": {
+     "field": "comments"
+    }
+   },
+   "avg": {
+    "avg": {
+     "field": "comments"
+    }
+   },
+   "mx": {
+    "max": {
+     "field": "reactions"
+    }
+   }
+  }
+ },
+ "expect": {
+  "total": 22,
+  "aggregations": {
+   "c": {
+    "count": 22,
+    "min": 5.0,
+    "max": 24.0,
+    "avg": 8.454545454545455,
+    "sum": 186.0
+   },
+   "avg": {
+    "value": 8.454545454545455
+   },
+   "mx": {
+    "value": 10.0
+   }
+  }
+ }
+}

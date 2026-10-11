@@ -1,0 +1,50 @@
+{
+ "name": "range_agg_ordered_by_from",
+ "request": {
+  "size": 0,
+  "aggs": {
+   "r": {
+    "range": {
+     "field": "reactions",
+     "ranges": [
+      {
+       "from": 0,
+       "to": 1
+      },
+      {
+       "from": 1
+      },
+      {
+       "to": 0
+      }
+     ]
+    }
+   }
+  }
+ },
+ "expect": {
+  "total": 336,
+  "aggregations": {
+   "r": {
+    "buckets": [
+     {
+      "key": "*-0.0",
+      "to": 0.0,
+      "doc_count": 0
+     },
+     {
+      "key": "0.0-1.0",
+      "from": 0.0,
+      "to": 1.0,
+      "doc_count": 311
+     },
+     {
+      "key": "1.0-*",
+      "from": 1.0,
+      "doc_count": 25
+     }
+    ]
+   }
+  }
+ }
+}

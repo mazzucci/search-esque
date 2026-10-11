@@ -1,0 +1,14 @@
+{
+ "name": "err_not_elasticsearch",
+ "request": {
+  "filters": [
+   {
+    "field": "state",
+    "eq": "open"
+   }
+  ]
+ },
+ "expect": {
+  "error_path": "$.filters"
+ }
+}
